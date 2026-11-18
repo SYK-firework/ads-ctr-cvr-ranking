@@ -4,7 +4,7 @@ RAW = $(DATA_DIR)/train_$(ROWS).txt
 PARQUET = $(DATA_DIR)/criteo_$(ROWS).parquet
 MLFLOW ?=
 
-.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid abtest test all
+.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid abtest train-deepctr delayed test all
 
 ATTR_ROWS ?= 2000000
 
@@ -42,6 +42,15 @@ bid:
 # Simulated A/B test of bidding policies (user-level split, SRM, delta method, power, A/A, peeking)
 abtest:
 	python -m adsrank.run_abtest --preds $(DATA_DIR)/preds_test.parquet
+
+# Deep CTR / CVR models on the same split as XGBoost
+train-deepctr:
+	python -m adsrank.train_deepctr --data $(ATTR_PARQUET) --model deepfm $(if $(MLFLOW),--mlflow $(MLFLOW),)
+	python -m adsrank.train_deepctr --data $(ATTR_PARQUET) --model dcnv2 $(if $(MLFLOW),--mlflow $(MLFLOW),)
+
+# Delayed-feedback CVR: naive vs waiting window vs DFM, against complete labels
+delayed:
+	python -m adsrank.run_delayed --data $(ATTR_PARQUET)
 
 prep: $(PARQUET)
 $(PARQUET): $(RAW)

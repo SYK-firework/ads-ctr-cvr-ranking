@@ -44,8 +44,8 @@ advertiser ROI and platform revenue. This repository builds and evaluates each p
 | Probability accuracy for pricing | Platt / Isotonic, ECE, per-campaign calibration, downsampling correction | done |
 | Automated bidding, advertiser ROI | Second-price replay, value-based bids, ROI-target auto-bidding, adaptive budget pacing | done |
 | Online experimentation | User-level A/B test, SRM, delta method, power, A/A, peeking | done |
-| Deep CTR models | DCN-v2 / DeepFM on Criteo DAC | planned |
-| Delayed conversions | Delayed-feedback CVR | planned |
+| Deep CTR models | DeepFM / DCN-v2 on the same split as XGBoost | implemented, results pending |
+| Delayed conversions | Replayed training cutoff; naive vs waiting window vs DFM (Chapelle, 2014) | implemented, results pending |
 | Low-latency serving | KServe deployment, p99 latency | planned |
 
 See [docs/roadmap.md](docs/roadmap.md) for the full plan.
@@ -268,6 +268,24 @@ Findings:
   calibrated. **Peeking 20 times inflates false positives to 24%**, about 5x; interim looks need
   a sequential method (alpha spending / always-valid p-values) or a fixed horizon.
 
+### Deep CTR models: DeepFM and DCN-v2
+
+`make train-deepctr` trains DeepFM (first-order + factorization machine + MLP) and DCN-v2
+(cross network + MLP) as separate CTR and CVR models, on the same features, split and metrics
+as the XGBoost baseline.
+
+_Results: tbd_
+
+### Delayed feedback
+
+`make delayed` replays the training cutoff at the end of the training window: conversions that
+happened after it are hidden, as they would be in production. All variants share the DCN-v2
+network and are scored on test clicks against complete labels: oracle (complete labels), naive
+(observed labels), a 24-hour waiting window, and the delayed feedback model (DFM), which fits
+the conversion probability and an exponential conversion delay jointly by maximum likelihood.
+
+_Results: tbd_
+
 ### Next: Criteo DAC CTR benchmark (planned)
 
 `make data prep train-gbdt` prepares the Criteo Display Advertising Challenge data
@@ -289,6 +307,8 @@ make train-esmm ATTR_ROWS=2000000         # ESMM vs click-only CVR loss -> resul
 make calibrate ATTR_ROWS=2000000          # calibration study + test predictions
 make bid                                  # bidding / auction replay on the test window
 make abtest                               # simulated A/B test of bidding policies
+make train-deepctr ATTR_ROWS=2000000      # DeepFM and DCN-v2 CTR / CVR models
+make delayed ATTR_ROWS=2000000            # delayed-feedback CVR study
 make prep ROWS=2000000
 make train-gbdt ROWS=2000000 MLFLOW=http://localhost:5000   # MLFLOW is optional
 ```
@@ -310,6 +330,10 @@ src/adsrank/
   run_bidding.py        bidding policy comparison
   abtest.py             hash assignment, SRM, Welch / delta-method tests, MDE and sample size
   run_abtest.py         A/B, A/A and peeking experiments on bidding policies
+  deepctr.py            DeepFM and DCN-v2 in PyTorch, shared binary trainer
+  train_deepctr.py      deep CTR / CVR training and evaluation
+  delayed.py            observed-label replay and the DFM likelihood
+  run_delayed.py        delayed-feedback CVR study
 scripts/
   download_criteo.sh        stream the first N rows without downloading the full 4.3GB archive
   download_attribution.py   stream N rows of Criteo Attribution from Hugging Face into Parquet
@@ -345,6 +369,10 @@ repository; the scripts download them from the original source.
   (Normalized Entropy, calibration, negative-downsampling correction)
 - Ma, X., Zhao, L., Huang, G., Wang, Z., Hu, Z., Zhu, X., & Gai, K. (2018). Entire space multi-task model: An effective approach for estimating post-click conversion rate. In *Proceedings of the 41st International ACM SIGIR Conference on Research & Development in Information Retrieval* (pp. 1137–1140). ACM. https://doi.org/10.1145/3209978.3210104
 - Chen, T., & Guestrin, C. (2016). XGBoost: A scalable tree boosting system. In *Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining* (pp. 785–794). ACM. https://doi.org/10.1145/2939672.2939785
+
+- Guo, H., Tang, R., Ye, Y., Li, Z., & He, X. (2017). DeepFM: A factorization-machine based neural network for CTR prediction. In *Proceedings of the 26th International Joint Conference on Artificial Intelligence* (pp. 1725–1731). IJCAI. https://doi.org/10.24963/ijcai.2017/239
+- Wang, R., Shivanna, R., Cheng, D., Jain, S., Lin, D., Hong, L., & Chi, E. (2021). DCN V2: Improved deep & cross network and practical lessons for web-scale learning to rank systems. In *Proceedings of the Web Conference 2021* (pp. 1785–1797). ACM. https://doi.org/10.1145/3442381.3450078
+- Chapelle, O. (2014). Modeling delayed feedback in display advertising. In *Proceedings of the 20th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining* (pp. 1097–1105). ACM. https://doi.org/10.1145/2623330.2623634
 
 ### Calibration
 - Platt, J. C. (1999). Probabilistic outputs for support vector machines and comparisons to regularized likelihood methods. In A. J. Smola, P. Bartlett, B. Schölkopf, & D. Schuurmans (Eds.), *Advances in large margin classifiers* (pp. 61–74). MIT Press.
