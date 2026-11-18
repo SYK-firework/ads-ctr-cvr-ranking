@@ -37,8 +37,8 @@ CVR is evaluated on clicked impressions; CTCVR = pCTR x pCVR on all impressions.
 | Model | CTR AUC | CTR NE | CTR Calib. | CVR AUC | CVR NE | CVR Calib. | CTCVR AUC |
 |---|---|---|---|---|---|---|---|
 | XGBoost, separate CTR / CVR | 0.6766 | 0.9273 | 0.966 | 0.8502 | 0.7406 | 1.023 | 0.8502 |
-| NN, CVR loss on clicks only | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
-| ESMM (CTCVR loss on all impressions) | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| NN, CVR loss on clicks only | 0.6764 | 0.9276 | 0.966 | 0.8457 | 0.7475 | 1.024 | 0.8475 |
+| ESMM (CTCVR loss on all impressions) | 0.6766 | 0.9277 | 0.960 | 0.8446 | 0.7499 | 1.023 | 0.8472 |
 
 The two neural rows share the same architecture (shared embeddings, CTR and CVR towers) and
 differ only in how the CVR tower is trained, which isolates the effect of the ESMM objective.
@@ -52,6 +52,20 @@ Observations from the XGBoost baseline ([results/attribution_xgb.json](results/a
 - CTCVR AUC is almost identical to CVR AUC (0.85016 vs 0.85022): impressions without a click
   are scored as low as clicked-but-not-converted ones, so ranking by pCTR x pCVR on all
   impressions is driven mostly by the CVR model.
+
+XGBoost vs neural models, and ESMM vs click-only CVR training:
+
+- **XGBoost is the strongest CVR / CTCVR model here** (CVR AUC 0.8502 vs 0.8446-0.8457).
+  With 11 categorical fields and 3 numeric features, gradient-boosted trees fit this tabular
+  signal at least as well as an embedding MLP, at a fraction of the training cost (72s vs ~300s on CPU).
+- **ESMM shows no gain over the click-only objective** on this data (CVR AUC 0.8446 vs 0.8457,
+  CTCVR AUC 0.8472 vs 0.8475; single seed, differences are within run-to-run noise).
+  ESMM targets sample selection bias when clicks are a small, skewed subset of impressions
+  (the original paper works with click rates of a few percent). In this public sample the click
+  rate is ~36%, so the clicked subset (~500K rows) is large and close to the impression
+  distribution, leaving little bias for ESMM to correct.
+- All models under-predict CTR on the test window (calibration 0.96-0.97), consistent with the
+  base-rate drift noted above; this is the target of the calibration stage.
 
 The public sample keeps a subset of non-clicked impressions, so the base CTR (~35%) is far above
 production levels. Calibration is reported against this sample; correcting for negative

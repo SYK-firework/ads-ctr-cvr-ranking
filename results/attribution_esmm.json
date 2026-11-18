@@ -1,0 +1,18 @@
+{
+ "data": "data/attribution_2000000.parquet",
+ "cvr_loss": "esmm",
+ "ctr_auc": 0.6766,
+ "ctr_logloss": 0.6054,
+ "ctr_ne": 0.9277,
+ "ctr_calibration": 0.9599,
+ "cvr_auc": 0.8446,
+ "cvr_logloss": 0.1973,
+ "cvr_ne": 0.7499,
+ "cvr_calibration": 1.0227,
+ "ctcvr_auc": 0.8472,
+ "ctcvr_logloss": 0.0962,
+ "ctcvr_ne": 0.7876,
+ "ctcvr_calibration": 0.9762,
+ "train_seconds": 298.6171,
+ "epochs_run": 5
+}

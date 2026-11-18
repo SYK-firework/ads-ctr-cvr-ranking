@@ -1,0 +1,18 @@
+{
+ "data": "data/attribution_2000000.parquet",
+ "cvr_loss": "clicked",
+ "ctr_auc": 0.6764,
+ "ctr_logloss": 0.6053,
+ "ctr_ne": 0.9276,
+ "ctr_calibration": 0.9662,
+ "cvr_auc": 0.8457,
+ "cvr_logloss": 0.1967,
+ "cvr_ne": 0.7475,
+ "cvr_calibration": 1.0242,
+ "ctcvr_auc": 0.8475,
+ "ctcvr_logloss": 0.0961,
+ "ctcvr_ne": 0.7871,
+ "ctcvr_calibration": 0.9831,
+ "train_seconds": 292.6074,
+ "epochs_run": 5
+}
