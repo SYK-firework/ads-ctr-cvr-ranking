@@ -14,6 +14,10 @@ On 2M impressions with a held-out, later-in-time test window:
   little sample selection bias to correct.
 - **All models under-predict CTR by 3-4%** on the test window (temporal drift in base CTR),
   which is why calibration is treated as its own stage.
+- **Calibrating pCTR and pCVR separately made pCTR x pCVR less calibrated** (0.989 -> 0.962):
+  their errors had been cancelling. Calibrate the quantity you bid on.
+- **Value-based bidding (`cpo x pCTR x pCVR`) buys 43% more conversion value than CTR-only
+  bidding at the same budget** in a second-price replay; CTR-only bids halve conversions.
 
 ## Why this project
 
@@ -32,8 +36,8 @@ advertiser ROI and platform revenue. This repository builds and evaluates each p
 |---|---|---|
 | CTR / CVR prediction | XGBoost CTR + CVR, time-based split, leakage-safe features | done |
 | CVR sample selection bias | ESMM vs click-only CVR loss (controlled comparison) | done |
-| Probability accuracy for pricing | Platt / Isotonic, ECE, per-campaign calibration, downsampling correction | implemented, results pending |
-| Automated bidding, advertiser ROI | Second-price replay, value-based bids, ROI-target auto-bidding, budget pacing | implemented, results pending |
+| Probability accuracy for pricing | Platt / Isotonic, ECE, per-campaign calibration, downsampling correction | done |
+| Automated bidding, advertiser ROI | Second-price replay, value-based bids, ROI-target auto-bidding, budget pacing | done (pacing needs tuning) |
 | Deep CTR models | DCN-v2 / DeepFM on Criteo DAC | planned |
 | Delayed conversions | Delayed-feedback CVR | planned |
 | Low-latency serving | KServe deployment, p99 latency | planned |
@@ -92,7 +96,40 @@ and AUC, with reliability diagrams in `results/`. It also runs a negative-downsa
 train CTR with non-clicks kept at 25%, then map predictions back with
 `p = p' w / (1 - p' + p' w)` and check calibration on the full test set.
 
-_Results: tbd_
+| Test set | Raw | Platt | Isotonic |
+|---|---|---|---|
+| CTR calibration (pred / actual) | 0.966 | 0.976 | 0.976 |
+| CTR ECE | 0.0122 | 0.0090 | 0.0092 |
+| CTR per-campaign error | 0.0489 | 0.0434 | 0.0427 |
+| CVR calibration | 1.023 | 0.984 | 0.985 |
+| CVR ECE | 0.0023 | 0.0030 | **0.0017** |
+| CVR per-campaign error | 0.1388 | 0.1328 | **0.1273** |
+| CTCVR calibration (pCTR x pCVR) | **0.989** | 0.962 | 0.963 |
+| CTR / CVR / CTCVR AUC | 0.677 / 0.850 / 0.850 | unchanged | unchanged |
+
+Negative downsampling (non-clicks kept at 25%, train CTR 0.36 -> 0.68):
+
+| Test set | Trained on sampled data | After correction | Full-data model |
+|---|---|---|---|
+| CTR calibration | 1.819 | **0.963** | 0.966 |
+| CTR ECE | 0.294 | **0.013** | 0.012 |
+| LogLoss | 0.802 | **0.608** | 0.605 |
+| AUC | 0.672 | 0.672 | 0.677 |
+
+![Reliability with downsampling](results/reliability_downsampling.png)
+
+Findings:
+
+- Calibrating on the validation window halves part of the CTR drift (0.966 -> 0.976) and lowers
+  ECE by ~25% without changing AUC. The rest of the gap is drift that continues past the
+  validation window, which favors frequent recalibration over a one-off fit.
+- **Calibrating CTR and CVR separately made the product worse** (CTCVR 0.989 -> 0.962). Raw CTR
+  was under-predicted and raw CVR over-predicted, and the errors cancelled in pCTR x pCVR.
+  Fixing each factor removed the cancellation. The quantity used for bidding should be
+  calibrated as a whole (or the factors calibrated jointly), not piece by piece.
+- Training on negative-downsampled data inflates CTR by 82%; the closed-form correction brings
+  it back to the full-data model's calibration with no AUC change, so downsampling for
+  training cost is safe as long as predictions are corrected before use.
 
 ### Bidding and auctions (stage 5)
 
@@ -107,7 +144,43 @@ Replay caveats: only impressions that were won are logged, so the full bid lands
 competition are not observed, and outcomes are assumed independent of the bid. The results
 compare policies against each other rather than estimate production revenue.
 
-_Results: tbd_
+Fixed budget (20% of total logged spend), test replay:
+
+| Policy | Conversions | Value | ROI | CPA |
+|---|---|---|---|---|
+| Random bids | 4,253 | 349 | 15.7 | 0.0052 |
+| CTR only (`cpo x pCTR`) | 2,120 | 355 | 16.0 | 0.0105 |
+| `cpo x pCTR x pCVR` | 4,276 | **498** | **22.4** | 0.0052 |
+| `cpo x pCTR x pCVR`, calibrated | 4,321 | 497 | 22.3 | 0.0052 |
+
+ROI-target auto-bidding (target ROI 13.8 = 1.5x the ROI of buying every impression):
+
+| Policy | Spend | Conversions | Value | ROI |
+|---|---|---|---|---|
+| Random bids | 36.6 | 5,893 | 511 | 13.9 |
+| CTR only | 42.4 | 3,787 | 592 | 13.9 |
+| `cpo x pCTR x pCVR` | 61.2 | 8,043 | 859 | 14.0 |
+| `cpo x pCTR x pCVR`, calibrated | 62.3 | 8,168 | **863** | 13.9 |
+
+![Value vs spend](results/bidding_value_vs_spend.png)
+
+Findings:
+
+- **Value-based bids buy 43% more conversion value than random or CTR-only bids at the same
+  budget** (ROI 22.4 vs 15.7-16.0).
+- **CTR-only bidding optimizes the wrong objective**: it buys clicks on high-CPO campaigns and
+  ends up with half the conversions of random bidding at the same spend.
+- Under an ROI constraint, value-based bidding can spend **46% more than CTR-only** (and 70%
+  more than random) while still meeting the target, i.e. more volume for the advertiser at the
+  same efficiency.
+- Calibration barely changes these results because the bid multiplier is tuned per policy, which
+  absorbs a global scale error. Calibration matters when bids are used as absolute values
+  (no per-campaign multiplier) or when probabilities are compared across models.
+- **The PI budget pacer needs work**: it used 98.6% of the budget, but one step overspent its
+  plan by 4.9x and total value was 35% below a hindsight-tuned constant multiplier (325 vs 497).
+  Causes: a cold start far from the right multiplier, integral wind-up, and an even spend plan
+  while traffic value varies over the day. Next: warm start from the previous period,
+  anti-windup, and a spend plan shaped by expected traffic.
 
 ### Criteo DAC: CTR benchmark
 
