@@ -4,7 +4,7 @@ RAW = $(DATA_DIR)/train_$(ROWS).txt
 PARQUET = $(DATA_DIR)/criteo_$(ROWS).parquet
 MLFLOW ?=
 
-.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm test all
+.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid test all
 
 ATTR_ROWS ?= 2000000
 
@@ -29,6 +29,15 @@ train-attribution:
 train-esmm:
 	python -m adsrank.train_esmm --data $(ATTR_PARQUET) --cvr-loss esmm $(if $(MLFLOW),--mlflow $(MLFLOW),)
 	python -m adsrank.train_esmm --data $(ATTR_PARQUET) --cvr-loss clicked $(if $(MLFLOW),--mlflow $(MLFLOW),)
+
+# Calibration study (Platt / Isotonic, ECE, per-campaign, negative-downsampling correction)
+# also writes test-set predictions used by the bidding simulation
+calibrate:
+	python -m adsrank.run_calibration --data $(ATTR_PARQUET)
+
+# Bidding replay: fixed budget, value-vs-spend curves, ROI-target auto-bidding, budget pacing
+bid:
+	python -m adsrank.run_bidding --preds $(DATA_DIR)/preds_test.parquet
 
 prep: $(PARQUET)
 $(PARQUET): $(RAW)

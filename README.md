@@ -71,6 +71,31 @@ The public sample keeps a subset of non-clicked impressions, so the base CTR (~3
 production levels. Calibration is reported against this sample; correcting for negative
 downsampling is part of the calibration stage.
 
+### Calibration (stage 3)
+
+`make calibrate` fits Platt and Isotonic calibrators on the validation window and evaluates on
+test: LogLoss, calibration ratio, Expected Calibration Error (ECE), per-campaign calibration error
+and AUC, with reliability diagrams in `results/`. It also runs a negative-downsampling experiment:
+train CTR with non-clicks kept at 25%, then map predictions back with
+`p = p' w / (1 - p' + p' w)` and check calibration on the full test set.
+
+_Results: tbd_
+
+### Bidding and auctions (stage 5)
+
+`make bid` replays the test window as a second-price auction: the logged `cost` is the market
+price, a bid wins if `bid >= cost`, and a win pays `cost` and receives the logged outcome.
+Bids are `alpha x cpo x pCTR x pCVR` (expected value of the impression). Compared policies:
+random, CTR-only, pCTR x pCVR raw, pCTR x pCVR calibrated. Experiments: fixed budget,
+value-vs-spend curves, ROI-target auto-bidding (largest alpha meeting the ROI goal) and a
+PI-controller budget pacer.
+
+Replay caveats: only impressions that were won are logged, so the full bid landscape and
+competition are not observed, and outcomes are assumed independent of the bid. The results
+compare policies against each other rather than estimate production revenue.
+
+_Results: tbd_
+
 ### Criteo DAC: CTR benchmark
 
 Criteo DAC, first 2M rows, time-based split (80/10/10). Test set.
@@ -91,6 +116,8 @@ make data ROWS=2000000    # stream the first 2M rows of Criteo DAC into data/
 make data-attribution ATTR_ROWS=2000000   # stream 2M rows of Criteo Attribution from Hugging Face
 make train-attribution ATTR_ROWS=2000000  # CTR + CVR XGBoost baseline -> results/attribution_xgb.json
 make train-esmm ATTR_ROWS=2000000         # ESMM vs click-only CVR loss -> results/attribution_*.json
+make calibrate ATTR_ROWS=2000000          # calibration study + test predictions
+make bid                                  # bidding / auction replay on the test window
 make prep ROWS=2000000
 make train-gbdt ROWS=2000000 MLFLOW=http://localhost:5000   # MLFLOW is optional
 ```
@@ -106,6 +133,10 @@ src/adsrank/
   train_attribution.py  CTR + CVR XGBoost baseline, CTCVR evaluation
   esmm.py               ESMM in PyTorch (shared embeddings, CTR / CVR towers, pCTCVR = pCTR x pCVR)
   train_esmm.py         train ESMM or the same network with a click-only CVR loss
+  calibration.py        Platt / Isotonic, ECE, reliability tables, downsampling correction
+  run_calibration.py    calibration study on Criteo Attribution
+  bidding.py            second-price replay, budget / ROI-target auto-bidding, PI pacing
+  run_bidding.py        bidding policy comparison
 scripts/
   download_criteo.sh        stream the first N rows without downloading the full 4.3GB archive
   download_attribution.py   stream N rows of Criteo Attribution from Hugging Face into Parquet

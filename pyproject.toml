@@ -9,6 +9,7 @@ dependencies = [
     "pyarrow",
     "scikit-learn",
     "xgboost",
+    "matplotlib",
 ]
 
 [project.optional-dependencies]

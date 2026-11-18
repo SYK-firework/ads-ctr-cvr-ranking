@@ -6,9 +6,9 @@ Each stage maps to a responsibility in an ads quality & ranking team.
 |---|-------|------|------|--------|
 | 1 | CTR / CVR baseline | Criteo Attribution, Criteo DAC | Time-based split, XGBoost CTR + CVR, AUC / LogLoss / NE / calibration, MLflow tracking | done (Attribution) |
 | 2 | Deep CTR models | Criteo DAC | DCN-v2 and DeepFM in PyTorch; embedding size, cross depth ablations | planned |
-| 3 | Calibration | Criteo DAC | Isotonic / Platt scaling, reliability diagrams, calibration by segment | planned |
+| 3 | Calibration | Criteo Attribution | Isotonic / Platt scaling, ECE, reliability diagrams, per-campaign calibration, negative-downsampling correction | implemented |
 | 4 | CVR and delayed feedback | Criteo Attribution | Post-click conversion, ESMM (entire-space CVR), delayed conversions | ESMM done; delayed feedback planned |
-| 5 | Ranking, auction, bidding | Criteo Attribution | eCPM = bid x pCTR x pCVR, GSP auction simulation, ROI-target auto-bidding, budget pacing | planned |
+| 5 | Ranking, auction, bidding | Criteo Attribution | Second-price replay with logged cost, value-based bids (cpo x pCTR x pCVR), ROI-target auto-bidding, PI budget pacing | implemented |
 | 6 | Serving | models above | KServe deployment, p50/p99 latency, autoscaling under load | planned |
 
 ## Datasets
