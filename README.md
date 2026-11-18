@@ -126,3 +126,4 @@ docs/roadmap.md   stages and datasets
 
 Criteo datasets are released by Criteo AI Lab for research use. They are not included in this
 repository; the scripts download them from the original source.
+https://huggingface.co/datasets/criteo/criteo-attribution-dataset
