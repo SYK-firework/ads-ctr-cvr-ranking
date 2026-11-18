@@ -12,7 +12,10 @@ Experiments:
   1. Fixed budget: each policy gets the same budget; compare conversions, value, ROI.
   2. Value-vs-spend curves over alpha (efficient frontier per policy).
   3. ROI-target auto-bidding: largest alpha that keeps ROI >= target.
-  4. Budget pacing: a PI controller adjusts alpha over time to spend the budget evenly.
+  4. Budget pacing over the test window, compared with a hindsight-tuned constant multiplier:
+       naive PI     : cold start (alpha far too low), integral term -> wind-up
+       adaptive     : warm start from the validation window, target = remaining budget /
+                      remaining steps, capped proportional updates (no wind-up)
 
 usage: python -m adsrank.run_bidding --preds data/preds_test.parquet
 """
@@ -27,7 +30,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from adsrank.bidding import alpha_for_roi, alpha_for_spend, pid_pacing, replay  # noqa: E402
+from adsrank.bidding import adaptive_pacing, alpha_for_roi, alpha_for_spend, pid_pacing, replay  # noqa: E402
 
 
 def policies(d: pd.DataFrame, seed: int = 0) -> dict[str, np.ndarray]:
@@ -77,15 +80,34 @@ def main() -> None:
     fig.savefig(out / "bidding_value_vs_spend.png", dpi=120)
     plt.close(fig)
 
-    pace = pid_pacing(evs["ctcvr_cal"], cost, attr, cpo, d.timestamp.to_numpy(), budget,
-                      alpha0=report["fixed_budget"]["ctcvr_cal"]["alpha"] * 0.1)
-    report["pacing"] = {"spend": float(pace.spend.sum()), "value": float(pace.value.sum()),
-                        "conversions": float(pace.conversions.sum()),
-                        "budget_used": float(pace.spend.sum() / budget),
-                        "max_step_overspend": float((pace.spend / pace.planned).max())}
+    n_steps = 48
+    ev_cal = evs["ctcvr_cal"]
+    static = report["fixed_budget"]["ctcvr_cal"]                    # hindsight: knows the whole window
+    naive = pid_pacing(ev_cal, cost, attr, cpo, d.timestamp.to_numpy(), budget, n_steps=n_steps,
+                       alpha0=static["alpha"] * 0.1)
+    valid_path = Path(a.preds.replace("_test", "_valid"))
+    if valid_path.exists():                                         # warm start from the previous period
+        v = pd.read_parquet(valid_path)
+        ev_v = (v.cpo * v.p_ctr * v.p_cvr).to_numpy(dtype=np.float64)
+        alpha0 = alpha_for_spend(ev_v, v.cost.to_numpy(), a.budget_frac * v.cost.sum())
+        warm = "validation window"
+    else:
+        alpha0, warm = static["alpha"] * 0.1, "none (preds_valid.parquet missing)"
+    adaptive = adaptive_pacing(ev_cal, cost, attr, cpo, d.timestamp.to_numpy(), budget, alpha0, n_steps=n_steps)
+
+    even = budget / n_steps
+    def pace_summary(p):
+        return {"spend": float(p.spend.sum()), "value": float(p.value.sum()),
+                "conversions": float(p.conversions.sum()), "budget_used": float(p.spend.sum() / budget),
+                "max_step_vs_even_plan": float(p.spend.max() / even),
+                "idle_steps": int((p.spend < 0.1 * even).sum()),
+                "value_vs_hindsight_static": float(p.value.sum() / static["value"])}
+    report["pacing"] = {"warm_start": warm, "alpha0": alpha0, "hindsight_static_alpha": static["alpha"],
+                        "naive_pi": pace_summary(naive), "adaptive": pace_summary(adaptive)}
     fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(pace.step, pace.planned.cumsum() / budget, "--", color="grey", label="plan (even pacing)")
-    ax.plot(pace.step, pace.spend.cumsum() / budget, label="actual (PI controller)")
+    ax.plot(np.arange(n_steps), np.arange(1, n_steps + 1) / n_steps, "--", color="grey", label="even plan")
+    ax.plot(naive.step, naive.spend.cumsum() / budget, label="naive PI (cold start, wind-up)")
+    ax.plot(adaptive.step, adaptive.spend.cumsum() / budget, label="adaptive (warm start, no wind-up)")
     ax.set(xlabel="time step", ylabel="cumulative share of budget", title="Budget pacing")
     ax.legend()
     fig.tight_layout()
@@ -100,8 +122,8 @@ def main() -> None:
     print(pd.DataFrame({k: v for k, v in report["roi_target"].items() if v.get("alpha")}).T
           .reindex(columns=cols).round(4).to_string())
     p = report["pacing"]
-    print(f"\n== Budget pacing (PI controller, ctcvr_cal) ==\nbudget used {p['budget_used']:.1%}, "
-          f"conversions {p['conversions']:.0f}, value {p['value']:.3f}, worst step {p['max_step_overspend']:.2f}x plan")
+    print(f"\n== Budget pacing (ctcvr_cal, {n_steps} steps; warm start: {p['warm_start']}) ==")
+    print(pd.DataFrame({k: p[k] for k in ("naive_pi", "adaptive")}).T.round(3).to_string())
     print(f"\nsaved {out}/bidding.json, bidding_value_vs_spend.png, bidding_pacing.png")
 
 

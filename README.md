@@ -190,6 +190,11 @@ Findings:
   nothing is bought for ~15 steps (integral wind-up). Causes: a cold start far from the right
   multiplier, no anti-windup, and an even spend plan while traffic value varies over the day. Next: warm start from the previous period,
   anti-windup, and a spend plan shaped by expected traffic.
+- **Adaptive pacer (fix for the above, results pending on real data)**: warm start from the
+  validation window, each step's target recomputed as remaining budget / remaining steps (a
+  bounded stand-in for the integral term that cannot wind up), capped proportional updates on
+  log(alpha), and per-step throttling at 1.5x the step target. `make bid` reports both pacers
+  against the hindsight-tuned constant multiplier.
 
 ### Criteo DAC: CTR benchmark
 

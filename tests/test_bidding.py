@@ -49,3 +49,36 @@ def test_pacing_spends_close_to_budget():
     budget = 0.2 * cost.sum()
     pace = pid_pacing(cpo * p, cost, attr, cpo, ts, budget, n_steps=40, alpha0=0.01)
     assert 0.8 < pace.spend.sum() / budget < 1.2
+
+
+def _bursty_log(n=60000, seed=3):
+    """Traffic whose volume varies 4x over the day, like real ad traffic."""
+    rng = np.random.default_rng(seed)
+    ts = np.sort(rng.random(n) ** 1.6)                     # denser early, sparser late
+    p = rng.beta(1, 30, n)
+    attr = (rng.random(n) < p).astype(int)
+    cpo = rng.uniform(0.5, 1.5, n)
+    cost = rng.uniform(0.001, 0.05, n)
+    return p, attr, cpo, cost, ts
+
+
+def test_adaptive_pacing_hits_budget_without_overdraft_or_idle():
+    from adsrank.bidding import adaptive_pacing
+    p, attr, cpo, cost, ts = _bursty_log()
+    ev, budget = cpo * p, 0.2 * cost.sum()
+    alpha0 = alpha_for_spend(ev[:5000], cost[:5000], 0.2 * cost[:5000].sum())   # "previous period"
+    pace = adaptive_pacing(ev, cost, attr, cpo, ts, budget, alpha0, n_steps=40)
+    assert 0.9 < pace.spend.sum() / budget <= 1.0 + 1e-9        # spends the budget, never more
+    assert (pace.spend > 0).all()                               # no idle steps
+    assert (pace.spend <= 1.5 * pace.planned + 1e-9).all()      # throttled: never above 1.5x the step target
+
+
+def test_adaptive_beats_naive_pi_on_bursty_traffic():
+    from adsrank.bidding import adaptive_pacing
+    p, attr, cpo, cost, ts = _bursty_log()
+    ev, budget = cpo * p, 0.2 * cost.sum()
+    a_static = alpha_for_spend(ev, cost, budget)
+    naive = pid_pacing(ev, cost, attr, cpo, ts, budget, n_steps=40, alpha0=a_static * 0.1)
+    alpha0 = alpha_for_spend(ev[:5000], cost[:5000], 0.2 * cost[:5000].sum())
+    adaptive = adaptive_pacing(ev, cost, attr, cpo, ts, budget, alpha0, n_steps=40)
+    assert adaptive.value.sum() > naive.value.sum()

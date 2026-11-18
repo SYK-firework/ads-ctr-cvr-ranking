@@ -70,7 +70,7 @@ def main() -> None:
             for s, d in (("valid", va), ("test", te))}
     va_clicked, te_clicked = (va.click == 1).to_numpy(), (te.click == 1).to_numpy()
 
-    report, curves_ctr, curves_cvr, calibrated = {}, {}, {}, {}
+    report, curves_ctr, curves_cvr, calibrated, fitted = {}, {}, {}, {}, {}
     for method in ["raw"] + list(CALIBRATORS):
         if method == "raw":
             p_ctr, p_cvr = pred["test"]
@@ -78,6 +78,7 @@ def main() -> None:
             c_ctr = CALIBRATORS[method]().fit(pred["valid"][0], va.click.to_numpy())
             c_cvr = CALIBRATORS[method]().fit(pred["valid"][1][va_clicked], va.attribution.to_numpy()[va_clicked])
             p_ctr, p_cvr = c_ctr.predict(pred["test"][0]), c_cvr.predict(pred["test"][1])
+            fitted[method] = (c_ctr, c_cvr)
         calibrated[method] = (p_ctr, p_cvr)
         report[method] = (summarize("ctr", te.click.to_numpy(), p_ctr, campaign_te)
                           | summarize("cvr", te.attribution.to_numpy()[te_clicked], p_cvr[te_clicked],
@@ -107,15 +108,22 @@ def main() -> None:
     reliability_plot(curves_cvr, "CVR reliability (test, clicked)", out / "reliability_cvr.png")
     reliability_plot(curves_ds, f"CTR with negatives kept at {a.neg_rate:.0%}", out / "reliability_downsampling.png")
     best = min(CALIBRATORS, key=lambda m: report[m]["ctcvr_logloss"])
-    preds = pd.DataFrame({
-        "timestamp": df.loc[te.index, "timestamp"].to_numpy(), "campaign": campaign_te,
-        "cost": df.loc[te.index, "cost"].to_numpy(), "cpo": df.loc[te.index, "cpo"].to_numpy(),
-        "click": te.click.to_numpy(), "attribution": te.attribution.to_numpy(),
-        "p_ctr_raw": pred["test"][0], "p_cvr_raw": pred["test"][1],
-        "p_ctr": calibrated[best][0], "p_cvr": calibrated[best][1],
-    })
+
+    def export(split_df, raw, cal, path):
+        pd.DataFrame({
+            "timestamp": df.loc[split_df.index, "timestamp"].to_numpy(),
+            "campaign": df.loc[split_df.index, "campaign"].to_numpy(),
+            "cost": df.loc[split_df.index, "cost"].to_numpy(), "cpo": df.loc[split_df.index, "cpo"].to_numpy(),
+            "click": split_df.click.to_numpy(), "attribution": split_df.attribution.to_numpy(),
+            "p_ctr_raw": raw[0], "p_cvr_raw": raw[1], "p_ctr": cal[0], "p_cvr": cal[1],
+        }).to_parquet(path, index=False)
+
     Path(a.preds_out).parent.mkdir(exist_ok=True)
-    preds.to_parquet(a.preds_out, index=False)
+    export(te, pred["test"], calibrated[best], a.preds_out)
+    # validation-window predictions: the "previous period" used to warm-start bid multipliers
+    c_ctr, c_cvr = fitted[best]
+    export(va, pred["valid"], (c_ctr.predict(pred["valid"][0]), c_cvr.predict(pred["valid"][1])),
+           a.preds_out.replace("_test", "_valid"))
 
     rows = ["ctr_logloss", "ctr_calibration", "ctr_ece", "ctr_campaign_error", "ctr_auc",
             "cvr_logloss", "cvr_calibration", "cvr_ece", "cvr_campaign_error", "cvr_auc",
@@ -129,7 +137,7 @@ def main() -> None:
     for k in ["calibration", "ece", "logloss", "auc"]:
         print(f"{k:12s} uncorrected {d['uncorrected_' + k]:.4f}   corrected {d['corrected_' + k]:.4f}")
     print(f"\nbest calibrator by CTCVR logloss: {best}")
-    print(f"saved {out}/calibration.json, reliability_*.png, {a.preds_out}")
+    print(f"saved {out}/calibration.json, reliability_*.png, {a.preds_out}, {a.preds_out.replace('_test', '_valid')}")
 
 
 if __name__ == "__main__":

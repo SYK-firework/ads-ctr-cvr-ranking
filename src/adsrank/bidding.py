@@ -56,6 +56,12 @@ def alpha_for_roi(ev, cost, attribution, cpo, target_roi: float,
     return best
 
 
+def _time_steps(ts: np.ndarray, n_steps: int) -> np.ndarray:
+    """Assign each (sorted) timestamp to one of n_steps equal-width time steps, last one inclusive."""
+    span = max(float(ts.max() - ts.min()), 1e-12)
+    return np.minimum(((ts - ts.min()) / span * n_steps).astype(int), n_steps - 1)
+
+
 def pid_pacing(ev, cost, attribution, cpo, timestamp, budget: float, n_steps: int = 48,
                alpha0: float = 1.0, kp: float = 0.8, ki: float = 0.2) -> pd.DataFrame:
     """Spend `budget` evenly over time by adjusting alpha after each time step (PI controller).
@@ -64,15 +70,50 @@ def pid_pacing(ev, cost, attribution, cpo, timestamp, budget: float, n_steps: in
     alpha_{t+1} = alpha_t * exp(kp * error_t + ki * sum(errors))."""
     order = np.argsort(np.asarray(timestamp), kind="stable")
     ev, cost, attribution, cpo, ts = (np.asarray(x)[order] for x in (ev, cost, attribution, cpo, timestamp))
-    edges = np.linspace(ts.min(), ts.max() + 1, n_steps + 1)
+    step_of = _time_steps(ts, n_steps)
     plan = budget / n_steps
     alpha, integral, rows = alpha0, 0.0, []
     for t in range(n_steps):
-        m = (ts >= edges[t]) & (ts < edges[t + 1])
+        m = step_of == t
         r = replay(ev[m] * alpha, cost[m], attribution[m], cpo[m])
         err = (plan - r["spend"]) / plan
         integral += err
         rows.append({"step": t, "alpha": alpha, "planned": plan, "spend": r["spend"],
                      "value": r["value"], "conversions": r["conversions"]})
         alpha = float(alpha * np.exp(np.clip(kp * err + ki * integral, -2, 2)))
+    return pd.DataFrame(rows)
+
+
+def adaptive_pacing(ev, cost, attribution, cpo, timestamp, budget: float, alpha0: float,
+                    n_steps: int = 48, kp: float = 0.5, max_change: float = 0.5,
+                    step_cap: float = 1.5) -> pd.DataFrame:
+    """Budget pacing without integral wind-up.
+
+    - warm start: alpha0 comes from the previous period (validation window), not a guess;
+    - each step's target is recomputed as remaining budget / remaining steps, so a shortfall or
+      overspend is spread over the rest of the day instead of being chased in one step
+      (this plays the role of the integral term but cannot wind up);
+    - proportional update on log(alpha), with the per-step change capped at +-max_change;
+    - spend in a step is capped at step_cap x target and at the remaining budget: once the cap
+      is reached the bidder stops buying until the next step (throttling), so a traffic burst
+      cannot drain the budget early.
+    """
+    order = np.argsort(np.asarray(timestamp), kind="stable")
+    ev, cost, attribution, cpo, ts = (np.asarray(x)[order] for x in (ev, cost, attribution, cpo, timestamp))
+    step_of = _time_steps(ts, n_steps)
+    alpha, remaining, rows = alpha0, budget, []
+    for t in range(n_steps):
+        target = remaining / (n_steps - t)
+        m = np.flatnonzero(step_of == t)
+        win = m[ev[m] * alpha >= cost[m]]
+        # throttle: stop buying once the step cap (or the remaining budget) is reached
+        cap = min(remaining, step_cap * target)
+        win = win[np.cumsum(cost[win]) <= cap] if len(win) else win
+        spend = float(cost[win].sum())
+        rows.append({"step": t, "alpha": alpha, "planned": target, "spend": spend,
+                     "value": float((cpo[win] * attribution[win]).sum()),
+                     "conversions": float(attribution[win].sum())})
+        remaining -= spend
+        err = (target - spend) / target if target > 0 else 0.0
+        alpha = float(alpha * np.exp(np.clip(kp * err, -max_change, max_change)))
     return pd.DataFrame(rows)
