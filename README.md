@@ -29,6 +29,22 @@ See [docs/roadmap.md](docs/roadmap.md) for the full plan.
 
 ## Results
 
+### Criteo Attribution: CTR + CVR (impression -> click -> attributed conversion)
+
+First 2M impressions (~3.75 days), time-based split (70/10/20). Test set.
+CVR is evaluated on clicked impressions; CTCVR = pCTR x pCVR on all impressions.
+
+| Model | CTR AUC | CTR NE | CTR Calib. | CVR AUC | CVR NE | CVR Calib. | CTCVR AUC |
+|---|---|---|---|---|---|---|---|
+| XGBoost, separate CTR / CVR | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| ESMM | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+
+The public sample keeps a subset of non-clicked impressions, so the base CTR (~35%) is far above
+production levels. Calibration is reported against this sample; correcting for negative
+downsampling is part of the calibration stage.
+
+### Criteo DAC: CTR benchmark
+
 Criteo DAC, first 2M rows, time-based split (80/10/10). Test set.
 
 | Model | AUC | LogLoss | NE | Calibration |
@@ -44,6 +60,7 @@ make install              # package + mlflow + pytest
 make test                 # smoke tests on synthetic Criteo-format data
 make data ROWS=2000000    # stream the first 2M rows of Criteo DAC into data/
 make data-attribution ATTR_ROWS=2000000   # stream 2M rows of Criteo Attribution from Hugging Face
+make train-attribution ATTR_ROWS=2000000  # CTR + CVR XGBoost baseline -> results/attribution_xgb.json
 make prep ROWS=2000000
 make train-gbdt ROWS=2000000 MLFLOW=http://localhost:5000   # MLFLOW is optional
 ```
@@ -55,6 +72,8 @@ src/adsrank/
   prep.py         Criteo preprocessing (time split, log transform, vocab with OOV, count encoding)
   metrics.py      AUC, LogLoss, Normalized Entropy, calibration
   train_gbdt.py   XGBoost CTR baseline with optional MLflow tracking
+  attribution.py        Criteo Attribution features, leakage-safe columns, time split
+  train_attribution.py  CTR + CVR XGBoost baseline, CTCVR evaluation
 scripts/
   download_criteo.sh        stream the first N rows without downloading the full 4.3GB archive
   download_attribution.py   stream N rows of Criteo Attribution from Hugging Face into Parquet
