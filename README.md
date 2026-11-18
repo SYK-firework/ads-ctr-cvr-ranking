@@ -305,13 +305,6 @@ visible conversions.
 
 _Results: tbd_
 
-### Next: Criteo DAC CTR benchmark (planned)
-
-`make data prep train-gbdt` prepares the Criteo Display Advertising Challenge data
-(time-based 80/10/10 split, log-transformed integers, train-window vocabulary) and trains an
-XGBoost CTR baseline. The planned stage adds DCN-v2 / DeepFM on the same split for comparison
-with published results.
-
 ## Quickstart
 
 ```bash
@@ -377,6 +370,12 @@ repository; the scripts download them from the original source.
 - Criteo Attribution Modeling for Bidding: https://huggingface.co/datasets/criteo/criteo-attribution-dataset
   (Diemert et al., 2017, "Attribution Modeling Increases Efficiency of Bidding in Display Advertising")
 - Criteo Display Advertising Challenge: https://www.kaggle.com/c/criteo-display-ad-challenge
+
+## Future work
+
+- Benchmark DeepFM / DCN-v2 on Criteo DAC against published results (loader and XGBoost baseline
+  are in `prep.py` / `train_gbdt.py`).
+- CUPED variance reduction for the A/B test, and a traffic-shaped spend plan for the pacer.
 
 ## References
 
