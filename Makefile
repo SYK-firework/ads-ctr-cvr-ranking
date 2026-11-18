@@ -4,7 +4,7 @@ RAW = $(DATA_DIR)/train_$(ROWS).txt
 PARQUET = $(DATA_DIR)/criteo_$(ROWS).parquet
 MLFLOW ?=
 
-.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid abtest train-deepctr delayed test all
+.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid abtest train-deepctr delayed export bench serve loadtest image deploy test all
 
 ATTR_ROWS ?= 2000000
 
@@ -51,6 +51,34 @@ train-deepctr:
 # Delayed-feedback CVR: naive vs waiting window vs DFM, against complete labels
 delayed:
 	python -m adsrank.run_delayed --data $(ATTR_PARQUET)
+
+# ---- serving ----
+IMAGE ?= adsrank-serving:v1
+URL ?= http://localhost:8080/predict
+RPS ?= 25,50,100,200,400
+
+# train + export models, vocabularies and sample requests; fails on training-serving skew
+export:
+	python -m adsrank.serving.export --data $(ATTR_PARQUET)
+
+# model-only latency by number of candidates per request
+bench:
+	python -m adsrank.serving.bench --model serving/model
+
+# local HTTP server (Ctrl+C to stop)
+serve:
+	MODEL_DIR=serving/model uvicorn adsrank.serving.app:app --port 8080 --workers 1
+
+# open-loop load test against URL
+loadtest:
+	python scripts/loadtest.py --url $(URL) --rps $(RPS) --plot results/serving_latency.png
+
+# container image, loaded into the kind cluster, deployed with KServe
+image:
+	docker build -f serving/Dockerfile -t $(IMAGE) . && kind load docker-image $(IMAGE) --name mlp
+
+deploy:
+	kubectl apply -f k8s/inferenceservice.yaml && kubectl wait --for=condition=Ready isvc/adsrank --timeout=300s
 
 prep: $(PARQUET)
 $(PARQUET): $(RAW)

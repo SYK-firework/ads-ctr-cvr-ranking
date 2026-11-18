@@ -18,3 +18,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ipynb_checkpoints/
+
+# exported serving artifacts (rebuilt by `make export`)
+serving/model/

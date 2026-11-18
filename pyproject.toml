@@ -17,6 +17,7 @@ dependencies = [
 tracking = ["mlflow"]
 data = ["datasets"]
 nn = ["torch"]
+serving = ["fastapi", "uvicorn", "httpx"]
 dev = ["pytest"]
 
 [build-system]

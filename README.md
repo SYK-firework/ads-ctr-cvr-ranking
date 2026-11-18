@@ -50,7 +50,7 @@ advertiser ROI and platform revenue. This repository builds and evaluates each p
 | Online experimentation | User-level A/B test, SRM, delta method, power, A/A, peeking | done |
 | Deep CTR models | DeepFM / DCN-v2 on the same split as XGBoost | done |
 | Delayed conversions | Replayed training cutoff; naive vs waiting window vs DFM variants vs rescaling | done |
-| Low-latency serving | KServe deployment, p99 latency | planned |
+| Low-latency serving | FastAPI scorer, skew check, model and HTTP latency, open-loop load test, KServe | implemented, results pending |
 
 See [docs/roadmap.md](docs/roadmap.md) for the full plan.
 
@@ -337,6 +337,21 @@ visible** at training time (observed CVR 3.9% vs true 7.8%). Delays are bimodal 
   taken from the training clicks' complete delays. Only the distribution is used, not any
   click's label; in production it would come from an older, matured period.
 
+### Serving and latency
+
+`make export` trains the XGBoost CTR / CVR models and exports them with their vocabularies, then
+runs a **training-serving skew check**: test rows scored through the training pipeline (pandas) and
+through the request path (plain numpy) must match. The check caught a real bug while building
+this: the serving path used every tree, while training-time predictions stop at the
+early-stopping iteration (max difference 0.22 in pCTR).
+
+`make bench` measures model-only latency by candidates per request; `make serve` + `make loadtest`
+run an open-loop load test (fixed request rate, latency measured from the scheduled send time, so
+queueing is included and tail latency is not under-reported). The same image deploys to the kind
+cluster with KServe (`make image deploy`), with CPU / memory limits and 1-3 replica autoscaling.
+
+_Results: tbd_
+
 ## Quickstart
 
 ```bash
@@ -353,6 +368,9 @@ make bid                                  # bidding / auction replay on the test
 make abtest                               # simulated A/B test of bidding policies
 make train-deepctr ATTR_ROWS=2000000      # DeepFM and DCN-v2 CTR / CVR models
 make delayed ATTR_ROWS=2000000            # delayed-feedback CVR study
+make export bench ATTR_ROWS=2000000       # export serving models (skew check) + model latency
+make serve                                # local scoring server on :8080 (separate terminal)
+make loadtest                             # open-loop load test, p50 / p90 / p99
 make prep ROWS=2000000
 make train-gbdt ROWS=2000000 MLFLOW=http://localhost:5000   # MLFLOW is optional
 ```
@@ -378,6 +396,10 @@ src/adsrank/
   train_deepctr.py      deep CTR / CVR training and evaluation
   delayed.py            observed-label replay and the DFM likelihood
   run_delayed.py        delayed-feedback CVR study
+  serving/              scorer (numpy feature path), export + skew check, FastAPI app, benchmark
+scripts/loadtest.py     open-loop HTTP load test
+serving/Dockerfile      scoring server image
+k8s/                    KServe InferenceService
 scripts/
   download_criteo.sh        stream the first N rows without downloading the full 4.3GB archive
   download_attribution.py   stream N rows of Criteo Attribution from Hugging Face into Parquet
