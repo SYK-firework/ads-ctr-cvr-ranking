@@ -25,6 +25,9 @@ On 2M impressions with a held-out, later-in-time test window:
 - **Delayed conversions halve the naive CVR** (only 50.5% visible at training time); rescaling by
   the expected visible share restores calibration with no AUC loss, while the classic
   exponential DFM over-corrects (calibration 1.94) on bimodal, heavy-tailed delays.
+- **Serving: scoring 50 candidates takes ~2 ms in the model and ~15 ms p50 / 122 ms p99 over HTTP
+  at 100 requests/s per 1-CPU replica**; a training-serving skew check caught a real bug (serving
+  ignored the early-stopping iteration) before deployment.
 - **In a user-level A/B test the value-based policy lifts ROI by 48%** (95% CI +35% to +61%);
   an A/A check confirms the test's 5% false-positive rate, and peeking 20 times inflates it to 24%.
 
@@ -50,7 +53,7 @@ advertiser ROI and platform revenue. This repository builds and evaluates each p
 | Online experimentation | User-level A/B test, SRM, delta method, power, A/A, peeking | done |
 | Deep CTR models | DeepFM / DCN-v2 on the same split as XGBoost | done |
 | Delayed conversions | Replayed training cutoff; naive vs waiting window vs DFM variants vs rescaling | done |
-| Low-latency serving | FastAPI scorer, skew check, model and HTTP latency, open-loop load test, KServe | implemented, results pending |
+| Low-latency serving | FastAPI scorer, skew check, model and HTTP latency, open-loop load test, KServe | done |
 
 See [docs/roadmap.md](docs/roadmap.md) for the full plan.
 
@@ -374,7 +377,25 @@ Results on a WSL laptop (Python server, 1 process, load generator on the same ma
   levers: horizontal scaling (KServe HPA below), a compiled serving runtime (e.g. Triton's FIL
   backend for tree models), and a binary protocol (gRPC / protobuf) instead of JSON.
 
-_Cluster results: tbd_
+Results on the kind cluster with KServe (load generated from a pod inside the cluster, 50
+candidates per request, each replica limited to 1 CPU; the WSL VM has **2 CPUs** in total):
+
+| Setup | Target rps | Achieved rps | p50 | p90 | p99 |
+|---|---|---|---|---|---|
+| 1 replica | 50 | 50.0 | 11.8 ms | 32.4 ms | 302 ms |
+| 1 replica | **100** | **99.9** | **15.6 ms** | **38.4 ms** | **122 ms** |
+| 1 replica | 200 | 47.8 (saturated) | 43 s | 68 s | 77 s |
+| 3 replicas | 25 | 23.2 (saturated) | 6.4 s | 14.4 s | 18.4 s |
+
+- **One replica on a dedicated CPU serves ~100 requests/s (~5,000 candidates/s)**, about 1.8x the
+  local run where the load generator and server shared the same cores.
+- **Three replicas were slower than one.** The VM has 2 CPUs; three 1-CPU replicas plus the load
+  generator and the control plane oversubscribe it, so pods throttle each other and the load
+  generator itself cannot send on schedule. Adding pods without adding CPU only adds contention.
+  Horizontal scaling pays off when nodes scale with it (cluster autoscaler), and replica limits
+  have to be sized against the node's allocatable CPU.
+- Each replica uses ~450-480 MiB (two boosters plus Python), close to the first 512 MiB limit;
+  the manifest now requests 512 MiB with a 768 MiB limit.
 
 ## Quickstart
 
