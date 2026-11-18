@@ -243,6 +243,11 @@ p < 0.05.
 
 <img src="results/abtest_lift.png" width="60%">
 
+The cumulative lift starts noisy: in the first ~2.5 hours the 95% CI still includes zero (and
+the point estimate was +10% after the first look), then the interval tightens around +40-55%.
+Look points are spaced by impression volume, so the long gap between hours 3 and 10 is a
+low-traffic period with few new impressions.
+
 Findings:
 
 - The value-based policy wins clearly: +53% conversion value and +48% ROI per user. Spend is
