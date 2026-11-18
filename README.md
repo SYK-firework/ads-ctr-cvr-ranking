@@ -135,6 +135,8 @@ Findings:
   it back to the full-data model's calibration with no AUC change, so downsampling for
   training cost is safe as long as predictions are corrected before use.
 
+Raw numbers: [results/calibration.json](results/calibration.json).
+
 ### Bidding and auctions (stage 5)
 
 `make bid` replays the test window as a second-price auction: the logged `cost` is the market
@@ -201,8 +203,12 @@ Findings:
   | **Adaptive** | **100.0%** | **1.73x** | **0** | **431** | **86.9%** |
 
   The adaptive pacer recovers **33% more conversion value** than the naive one with no idle steps.
+  The warm start lands close to the right level: the multiplier fitted on the validation window
+  (0.0886) is within 4% of the hindsight-optimal one for the test window (0.0924).
   The remaining 13% gap to the hindsight-tuned constant multiplier comes from the even spend
   plan: traffic value varies over the day, and a plan shaped by forecast traffic is the next step.
+
+Raw numbers: [results/bidding.json](results/bidding.json).
 
 ### Criteo DAC: CTR benchmark
 
