@@ -9,14 +9,11 @@ DeepFM : first-order term + factorization machine (pairwise inner products of fi
 DCN-v2 : a cross network x_{l+1} = x_0 * (W_l x_l + b_l) + x_l that builds explicit bounded-degree
          feature crosses, run in parallel with an MLP; their outputs are concatenated.
 """
-import os
 import time
 
-os.environ.setdefault("MKL_ENABLE_INSTRUCTIONS", "AVX2")   # see adsrank.esmm
-
-import numpy as np  # noqa: E402
-import torch  # noqa: E402
-from torch import nn  # noqa: E402
+import numpy as np
+import torch
+from torch import nn
 
 
 def mlp(d_in: int, hidden: tuple[int, ...], dropout: float) -> tuple[nn.Sequential, int]:
