@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 tracking = ["mlflow"]
+data = ["datasets"]
 dev = ["pytest"]
 
 [build-system]

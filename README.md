@@ -43,6 +43,7 @@ uv venv && source .venv/bin/activate
 make install              # package + mlflow + pytest
 make test                 # smoke tests on synthetic Criteo-format data
 make data ROWS=2000000    # stream the first 2M rows of Criteo DAC into data/
+make data-attribution ATTR_ROWS=2000000   # stream 2M rows of Criteo Attribution from Hugging Face
 make prep ROWS=2000000
 make train-gbdt ROWS=2000000 MLFLOW=http://localhost:5000   # MLFLOW is optional
 ```
@@ -55,7 +56,8 @@ src/adsrank/
   metrics.py      AUC, LogLoss, Normalized Entropy, calibration
   train_gbdt.py   XGBoost CTR baseline with optional MLflow tracking
 scripts/
-  download_criteo.sh   stream the first N rows without downloading the full 4.3GB archive
+  download_criteo.sh        stream the first N rows without downloading the full 4.3GB archive
+  download_attribution.py   stream N rows of Criteo Attribution from Hugging Face into Parquet
 tests/            smoke tests on synthetic data
 docs/roadmap.md   stages and datasets
 ```

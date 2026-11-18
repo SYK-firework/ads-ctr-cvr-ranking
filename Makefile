@@ -4,10 +4,16 @@ RAW = $(DATA_DIR)/train_$(ROWS).txt
 PARQUET = $(DATA_DIR)/criteo_$(ROWS).parquet
 MLFLOW ?=
 
-.PHONY: install data prep train-gbdt test all
+.PHONY: install data data-attribution prep train-gbdt test all
+
+ATTR_ROWS ?= 2000000
 
 install:
-	uv pip install -e ".[tracking,dev]"
+	uv pip install -e ".[tracking,dev,data]"
+
+# Criteo Attribution (impression -> click -> conversion, with cost): stream a subset from Hugging Face
+data-attribution:
+	python scripts/download_attribution.py --rows $(ATTR_ROWS) --out $(DATA_DIR)/attribution_$(ATTR_ROWS).parquet
 
 data: $(RAW)
 $(RAW):
