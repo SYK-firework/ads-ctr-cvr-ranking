@@ -15,6 +15,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from adsrank.optim import adam
+
 
 def mlp(d_in: int, hidden: tuple[int, ...], dropout: float) -> tuple[nn.Sequential, int]:
     layers, d = [], d_in
@@ -86,7 +88,7 @@ def train_binary(model, train, valid, epochs: int = 5, batch: int = 4096, lr: fl
                  patience: int = 1, seed: int = 0, log=print, name: str = ""):
     """train / valid = (x_cat, x_num, y). Early stopping on valid logloss; returns the best model."""
     torch.manual_seed(seed)
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    opt = adam(model.parameters(), lr=lr)
     bce = nn.BCEWithLogitsLoss()
     best, best_state, bad, t0 = np.inf, None, 0, time.time()
     n = len(train[0])

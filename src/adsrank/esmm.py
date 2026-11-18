@@ -24,6 +24,7 @@ from torch import nn
 
 from adsrank.attribution import CATS
 from adsrank.metrics import ads_metrics
+from adsrank.optim import adam
 
 NN_CATS = CATS + ["hour"]
 NN_NUMS = ["cpo", "log_tslc", "no_prev_click"]
@@ -129,7 +130,7 @@ def train_esmm(feats: pd.DataFrame, cvr_loss: str = "esmm", epochs: int = 5, bat
     Xtr, Xva, Xte = (to_tensors(d, mean, std) for d in (tr, va, te))
 
     model = ESMM(vocab_sizes(feats), len(NN_NUMS), emb_dim=emb_dim)
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    opt = adam(model.parameters(), lr=lr)
     best, best_state, bad, t0 = np.inf, None, 0, time.time()
     n = len(Xtr[0])
     for ep in range(epochs):

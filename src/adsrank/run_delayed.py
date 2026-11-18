@@ -19,6 +19,7 @@ from adsrank.deepctr import DCNv2, predict_logits, train_binary
 from adsrank.delayed import dfm_loss, observed_labels
 from adsrank.esmm import NN_NUMS, to_tensors, vocab_sizes
 from adsrank.metrics import ads_metrics
+from adsrank.optim import adam
 
 
 def sigmoid(z):
@@ -28,7 +29,7 @@ def sigmoid(z):
 def train_dfm(model, x_cat, x_num, y_obs, elapsed, delay, init_rate: float, epochs: int = 5,
               batch: int = 4096, lr: float = 1e-3, log=print):
     log_lambda = torch.nn.Parameter(torch.tensor(float(np.log(init_rate))))
-    opt = torch.optim.Adam(list(model.parameters()) + [log_lambda], lr=lr)
+    opt = adam(list(model.parameters()) + [log_lambda], lr=lr)
     n, t0 = len(x_cat), time.time()
     for ep in range(epochs):
         model.train()
