@@ -1,12 +1,23 @@
 # ads-ctr-cvr-ranking
 
-CTR / CVR prediction and ad ranking on Criteo public datasets, built as an end-to-end
-**ads quality & ranking** pipeline: from click prediction to calibrated probabilities,
-conversion modeling, auction-based ranking, auto-bidding and low-latency serving.
+CTR / CVR prediction, calibration and value-based bidding on Criteo's public
+[Attribution dataset](https://huggingface.co/datasets/criteo/criteo-attribution-dataset),
+built as an end-to-end **ads quality & ranking** pipeline.
+
+## Key findings
+
+On 2M impressions with a held-out, later-in-time test window:
+
+- **XGBoost is the strongest CVR / CTCVR model** (CVR AUC 0.850 vs 0.845 for ESMM) and trains about 4x faster.
+- **ESMM gives no gain over click-only CVR training** on this data. The public sample has a ~36%
+  click rate, so the clicked subset is large and close to the impression distribution, leaving
+  little sample selection bias to correct.
+- **All models under-predict CTR by 3-4%** on the test window (temporal drift in base CTR),
+  which is why calibration is treated as its own stage.
 
 ## Why this project
 
-Search and display ads platforms rank candidates by expected value per impression:
+Ads platforms rank candidates by expected value per impression:
 
 ```
 eCPM = bid x pCTR            (cost-per-click ads)
@@ -17,13 +28,15 @@ That makes the quality of `pCTR` and `pCVR` - both their **ranking** (AUC) and t
 **calibration** (are 2% predictions really clicked 2% of the time?) - the core of ad quality,
 advertiser ROI and platform revenue. This repository builds and evaluates each piece.
 
-| Ads quality & ranking problem | Where in this repo |
-|---|---|
-| CTR prediction at scale | Stage 1-2: XGBoost baseline, DCN-v2 / DeepFM |
-| Probability accuracy for pricing | Stage 3: calibration |
-| CVR prediction, sample selection bias | Stage 4: ESMM, delayed feedback |
-| Automated auctions and bidding, advertiser ROI | Stage 5: GSP simulation, ROI-target bidding |
-| High-throughput, low-latency serving | Stage 6: KServe, p99 latency |
+| Ads quality & ranking problem | In this repo | Status |
+|---|---|---|
+| CTR / CVR prediction | XGBoost CTR + CVR, time-based split, leakage-safe features | done |
+| CVR sample selection bias | ESMM vs click-only CVR loss (controlled comparison) | done |
+| Probability accuracy for pricing | Platt / Isotonic, ECE, per-campaign calibration, downsampling correction | implemented, results pending |
+| Automated bidding, advertiser ROI | Second-price replay, value-based bids, ROI-target auto-bidding, budget pacing | implemented, results pending |
+| Deep CTR models | DCN-v2 / DeepFM on Criteo DAC | planned |
+| Delayed conversions | Delayed-feedback CVR | planned |
+| Low-latency serving | KServe deployment, p99 latency | planned |
 
 See [docs/roadmap.md](docs/roadmap.md) for the full plan.
 
@@ -157,4 +170,7 @@ docs/roadmap.md   stages and datasets
 
 Criteo datasets are released by Criteo AI Lab for research use. They are not included in this
 repository; the scripts download them from the original source.
-https://huggingface.co/datasets/criteo/criteo-attribution-dataset
+
+- Criteo Attribution Modeling for Bidding: https://huggingface.co/datasets/criteo/criteo-attribution-dataset
+  (Diemert et al., 2017, "Attribution Modeling Increases Efficiency of Bidding in Display Advertising")
+- Criteo Display Advertising Challenge: https://www.kaggle.com/c/criteo-display-ad-challenge
