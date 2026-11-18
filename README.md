@@ -116,7 +116,11 @@ Negative downsampling (non-clicks kept at 25%, train CTR 0.36 -> 0.68):
 | LogLoss | 0.802 | **0.608** | 0.605 |
 | AUC | 0.672 | 0.672 | 0.677 |
 
-![Reliability with downsampling](results/reliability_downsampling.png)
+<p>
+<img src="results/reliability_ctr.png" width="32%">
+<img src="results/reliability_cvr.png" width="32%">
+<img src="results/reliability_downsampling.png" width="32%">
+</p>
 
 Findings:
 
@@ -162,7 +166,10 @@ ROI-target auto-bidding (target ROI 13.8 = 1.5x the ROI of buying every impressi
 | `cpo x pCTR x pCVR` | 61.2 | 8,043 | 859 | 14.0 |
 | `cpo x pCTR x pCVR`, calibrated | 62.3 | 8,168 | **863** | 13.9 |
 
-![Value vs spend](results/bidding_value_vs_spend.png)
+<p>
+<img src="results/bidding_value_vs_spend.png" width="49%">
+<img src="results/bidding_pacing.png" width="49%">
+</p>
 
 Findings:
 
@@ -178,8 +185,10 @@ Findings:
   (no per-campaign multiplier) or when probabilities are compared across models.
 - **The PI budget pacer needs work**: it used 98.6% of the budget, but one step overspent its
   plan by 4.9x and total value was 35% below a hindsight-tuned constant multiplier (325 vs 497).
-  Causes: a cold start far from the right multiplier, integral wind-up, and an even spend plan
-  while traffic value varies over the day. Next: warm start from the previous period,
+  The pacing plot shows the failure mode: after a slow start the integral term pushes the
+  multiplier up, spend overshoots around steps 20-24, then the multiplier collapses and almost
+  nothing is bought for ~15 steps (integral wind-up). Causes: a cold start far from the right
+  multiplier, no anti-windup, and an even spend plan while traffic value varies over the day. Next: warm start from the previous period,
   anti-windup, and a spend plan shaped by expected traffic.
 
 ### Criteo DAC: CTR benchmark
