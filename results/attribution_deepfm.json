@@ -1,0 +1,16 @@
+{
+ "model": "deepfm",
+ "ctr_auc": 0.6762,
+ "ctr_logloss": 0.6061,
+ "ctr_ne": 0.9287,
+ "ctr_calibration": 0.9785,
+ "cvr_auc": 0.848,
+ "cvr_logloss": 0.196,
+ "cvr_ne": 0.7448,
+ "cvr_calibration": 1.0418,
+ "ctcvr_auc": 0.8494,
+ "ctcvr_logloss": 0.0958,
+ "ctcvr_ne": 0.785,
+ "ctcvr_calibration": 1.0272,
+ "train_seconds": 215.0293
+}

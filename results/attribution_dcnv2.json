@@ -1,0 +1,16 @@
+{
+ "model": "dcnv2",
+ "ctr_auc": 0.6779,
+ "ctr_logloss": 0.6052,
+ "ctr_ne": 0.9274,
+ "ctr_calibration": 0.9587,
+ "cvr_auc": 0.8484,
+ "cvr_logloss": 0.196,
+ "cvr_ne": 0.7449,
+ "cvr_calibration": 1.0312,
+ "ctcvr_auc": 0.8501,
+ "ctcvr_logloss": 0.0958,
+ "ctcvr_ne": 0.7847,
+ "ctcvr_calibration": 0.9892,
+ "train_seconds": 482.3046
+}

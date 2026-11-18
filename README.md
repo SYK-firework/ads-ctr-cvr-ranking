@@ -11,7 +11,8 @@ built as an end-to-end **ads quality & ranking** pipeline.
 
 On 2M impressions with a held-out, later-in-time test window:
 
-- **XGBoost is the strongest CVR / CTCVR model** (CVR AUC 0.850 vs 0.845 for ESMM) and trains about 4x faster.
+- **XGBoost is the strongest CVR / CTCVR model** (CVR AUC 0.850 vs 0.845-0.848 for ESMM, DeepFM and
+  DCN-v2) and trains 3-7x faster; DCN-v2 is best on CTR by a small margin (AUC 0.678 vs 0.677).
 - **ESMM gives no gain over click-only CVR training** on this data. The public sample has a ~36%
   click rate, so the clicked subset is large and close to the impression distribution, leaving
   little sample selection bias to correct.
@@ -44,7 +45,7 @@ advertiser ROI and platform revenue. This repository builds and evaluates each p
 | Probability accuracy for pricing | Platt / Isotonic, ECE, per-campaign calibration, downsampling correction | done |
 | Automated bidding, advertiser ROI | Second-price replay, value-based bids, ROI-target auto-bidding, adaptive budget pacing | done |
 | Online experimentation | User-level A/B test, SRM, delta method, power, A/A, peeking | done |
-| Deep CTR models | DeepFM / DCN-v2 on the same split as XGBoost | implemented, results pending |
+| Deep CTR models | DeepFM / DCN-v2 on the same split as XGBoost | done |
 | Delayed conversions | Replayed training cutoff; naive vs waiting window vs DFM (Chapelle, 2014) | implemented, results pending |
 | Low-latency serving | KServe deployment, p99 latency | planned |
 
@@ -62,6 +63,8 @@ CVR is evaluated on clicked impressions; CTCVR = pCTR x pCVR on all impressions.
 | XGBoost, separate CTR / CVR | 0.6766 | 0.9273 | 0.966 | 0.8502 | 0.7406 | 1.023 | 0.8502 |
 | NN, CVR loss on clicks only | 0.6764 | 0.9276 | 0.966 | 0.8457 | 0.7475 | 1.024 | 0.8475 |
 | ESMM (CTCVR loss on all impressions) | 0.6766 | 0.9277 | 0.960 | 0.8446 | 0.7499 | 1.023 | 0.8472 |
+| DeepFM, separate CTR / CVR | 0.6762 | 0.9287 | 0.979 | 0.8480 | 0.7448 | 1.042 | 0.8494 |
+| DCN-v2, separate CTR / CVR | **0.6779** | **0.9274** | 0.959 | 0.8484 | 0.7449 | 1.031 | 0.8501 |
 
 The two neural rows share the same architecture (shared embeddings, CTR and CVR towers) and
 differ only in how the CVR tower is trained, which isolates the effect of the ESMM objective.
@@ -272,9 +275,23 @@ Findings:
 
 `make train-deepctr` trains DeepFM (first-order + factorization machine + MLP) and DCN-v2
 (cross network + MLP) as separate CTR and CVR models, on the same features, split and metrics
-as the XGBoost baseline.
+as the XGBoost baseline (results are in the main table above).
 
-_Results: tbd_
+| Model | CTR AUC | CVR AUC | CTCVR AUC | Training time (CPU) |
+|---|---|---|---|---|
+| XGBoost | 0.6766 | **0.8502** | **0.8502** | **72 s** |
+| DeepFM | 0.6762 | 0.8480 | 0.8494 | 215 s |
+| DCN-v2 | **0.6779** | 0.8484 | 0.8501 | 482 s |
+
+- **DCN-v2 is the best CTR model** (+0.0013 AUC over XGBoost), the only place where explicit
+  feature crosses beat trees here; **XGBoost stays best on CVR and CTCVR**.
+- All five models land within 0.002 CTR AUC and 0.006 CVR AUC of each other. With 11 anonymized
+  categorical fields there is little interaction structure left for deeper models to find, and
+  the gap is small next to the cost: DCN-v2 trains about 7x slower than XGBoost.
+- The deep CVR models start overfitting after the second epoch (validation loss rises), as
+  expected with ~500K clicks; early stopping picks epoch 2.
+- Practical call on this data: XGBoost for CVR / CTCVR, DCN-v2 only if a +0.001 CTR AUC gain is
+  worth the training and serving cost, which would have to be confirmed online.
 
 ### Delayed feedback
 
