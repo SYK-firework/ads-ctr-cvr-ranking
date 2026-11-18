@@ -5,7 +5,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from adsrank.attribution import build_features, time_split   # noqa: E402
-from adsrank.esmm import ESMM, NN_CATS, NN_NUMS, loss_fn, train_esmm, vocab_sizes   # noqa: E402
+from adsrank.esmm import ESMM, NN_CATS, NN_NUMS, load, loss_fn, save, train_esmm, vocab_sizes   # noqa: E402
 from test_attribution import fake_attribution   # noqa: E402
 
 
@@ -33,3 +33,16 @@ def test_train_esmm_learns(cvr_loss):
     feats = build_features(df, time_split(df))
     _, r = train_esmm(feats, cvr_loss=cvr_loss, epochs=3, batch=1024, threads=2, log=lambda *_: None)
     assert r["ctr_auc"] > 0.6 and r["cvr_auc"] > 0.55
+
+
+def test_save_and_load_roundtrip(tmp_path):
+    df = fake_attribution(5000)
+    feats = build_features(df, time_split(df))
+    model, _ = train_esmm(feats, epochs=1, batch=1024, threads=2, log=lambda *_: None)
+    save(model, tmp_path)
+    reloaded = load(tmp_path)
+    x_cat = torch.zeros(4, len(NN_CATS), dtype=torch.long)
+    x_num = torch.zeros(4, len(NN_NUMS))
+    with torch.no_grad():
+        for a, b in zip(model(x_cat, x_num), reloaded(x_cat, x_num)):
+            assert torch.allclose(a, b)

@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 from adsrank.attribution import build_features, load, time_split
-from adsrank.esmm import train_esmm
+from adsrank.esmm import save, train_esmm
 
 
 def main() -> None:
@@ -49,7 +49,10 @@ def main() -> None:
             mlflow.log_params({"model": name, "epochs": a.epochs, "batch": a.batch, "lr": a.lr,
                                "emb_dim": a.emb_dim, "rows": len(feats)})
             mlflow.log_metrics({k: float(v) for k, v in r.items()})
-            mlflow.pytorch.log_model(model, name="model")
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmp:
+                save(model, tmp)                       # weights + config, reload with esmm.load()
+                mlflow.log_artifacts(tmp, artifact_path="model")
         print("logged to MLflow experiment 'criteo-attribution'")
 
 

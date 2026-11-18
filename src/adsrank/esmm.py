@@ -87,6 +87,26 @@ def loss_fn(p_ctr, p_cvr, y_click, y_conv, cvr_loss: str):
     return l_ctr + bce(p_cvr[mask].clamp(eps, 1 - eps), y_conv[mask])
 
 
+def save(model: ESMM, directory: str) -> None:
+    """Save weights (state_dict) + config. Reload with load(); no pickled code involved."""
+    import json
+    from pathlib import Path
+    d = Path(directory)
+    d.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), d / "esmm_state_dict.pt")
+    (d / "esmm_config.json").write_text(json.dumps(model.config, indent=1))
+
+
+def load(directory: str) -> ESMM:
+    import json
+    from pathlib import Path
+    cfg = json.loads((Path(directory) / "esmm_config.json").read_text())
+    model = ESMM(cfg["vocab_sizes"], cfg["n_num"], emb_dim=cfg["emb_dim"])
+    model.load_state_dict(torch.load(Path(directory) / "esmm_state_dict.pt", weights_only=True))
+    model.config = cfg
+    return model.eval()
+
+
 def evaluate(p_ctr, p_cvr, y_click, y_conv) -> dict[str, float]:
     clicked = y_click == 1
     return (ads_metrics(y_click, p_ctr, "ctr")
@@ -133,6 +153,10 @@ def train_esmm(feats: pd.DataFrame, cvr_loss: str = "esmm", epochs: int = 5, bat
             if bad > patience:
                 break
     model.load_state_dict(best_state)
+    model.eval()
+    model.config = {"vocab_sizes": vocab_sizes(feats), "n_num": len(NN_NUMS), "emb_dim": emb_dim,
+                    "cats": NN_CATS, "nums": NN_NUMS,
+                    "num_mean": mean.tolist(), "num_std": std.tolist()}
     tc, tv = predict(model, Xte[0], Xte[1])
     r = evaluate(tc, tv, Xte[2].numpy(), Xte[3].numpy()) | {"train_seconds": time.time() - t0,
                                                              "epochs_run": ep + 1}
