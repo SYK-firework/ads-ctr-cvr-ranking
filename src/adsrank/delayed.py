@@ -67,8 +67,8 @@ class ExpMixtureDelay(torch.nn.Module):
         return torch.logsumexp(self._log_w() - self.log_rate.exp() * e[:, None], dim=1)
 
     def mean_hours(self) -> float:
-        w = torch.softmax(self.weight_logit, 0)
-        return float((w / self.log_rate.exp()).sum() / 3600)
+        w = torch.softmax(self.weight_logit.detach(), 0)
+        return float((w / self.log_rate.exp()).sum().detach() / 3600)
 
 
 def mixture_dfm_loss(logit, delay_model: ExpMixtureDelay, y_obs, elapsed, delay):

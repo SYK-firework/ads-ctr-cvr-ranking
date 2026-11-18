@@ -22,6 +22,9 @@ On 2M impressions with a held-out, later-in-time test window:
   their errors had been cancelling. Calibrate the quantity you bid on.
 - **Value-based bidding (`cpo x pCTR x pCVR`) buys 43% more conversion value than CTR-only
   bidding at the same budget** in a second-price replay; CTR-only bids halve conversions.
+- **Delayed conversions halve the naive CVR** (only 50.5% visible at training time); rescaling by
+  the expected visible share restores calibration with no AUC loss, while the classic
+  exponential DFM over-corrects (calibration 1.94) on bimodal, heavy-tailed delays.
 - **In a user-level A/B test the value-based policy lifts ROI by 48%** (95% CI +35% to +61%);
   an A/A check confirms the test's 5% false-positive rate, and peeking 20 times inflates it to 24%.
 
@@ -46,7 +49,7 @@ advertiser ROI and platform revenue. This repository builds and evaluates each p
 | Automated bidding, advertiser ROI | Second-price replay, value-based bids, ROI-target auto-bidding, adaptive budget pacing | done |
 | Online experimentation | User-level A/B test, SRM, delta method, power, A/A, peeking | done |
 | Deep CTR models | DeepFM / DCN-v2 on the same split as XGBoost | done |
-| Delayed conversions | Replayed training cutoff; naive vs waiting window vs DFM (Chapelle, 2014) | implemented, results pending |
+| Delayed conversions | Replayed training cutoff; naive vs waiting window vs DFM variants vs rescaling | done |
 | Low-latency serving | KServe deployment, p99 latency | planned |
 
 See [docs/roadmap.md](docs/roadmap.md) for the full plan.
@@ -303,7 +306,36 @@ delay (Chapelle, 2014) and with a two-component exponential mixture, DFM with th
 distribution fixed from matured history, and the naive model rescaled by the expected share of
 visible conversions.
 
-_Results: tbd_
+Delays on the training clicks (cutoff 62.7 h into the data): only **50.5% of conversions are
+visible** at training time (observed CVR 3.9% vs true 7.8%). Delays are bimodal and heavy-tailed:
+37% arrive within an hour, the median is 26 h, and the 90th percentile is 425 h (18 days).
+
+| CVR model (test clicks, complete labels) | AUC | LogLoss | NE | Calibration |
+|---|---|---|---|---|
+| Oracle (complete labels, upper bound) | 0.8488 | 0.1959 | 0.7445 | 1.030 |
+| Naive (observed labels) | 0.8234 | 0.2282 | 0.8671 | 0.503 |
+| 24 h waiting window | 0.8069 | 0.2220 | 0.8437 | 0.617 |
+| DFM, exponential delay | 0.7976 | 0.4773 | 1.8139 | 1.936 |
+| DFM, 2-exponential mixture | 0.8024 | 0.2400 | 0.9120 | 0.912 |
+| DFM, delay distribution from history | 0.8004 | 0.2477 | 0.9413 | 1.010 |
+| **Naive, rescaled by expected visible share** | **0.8234** | **0.2248** | **0.8541** | **1.010** |
+
+- **Ignoring delays halves the predicted CVR** (calibration 0.50). In bidding that means
+  under-bidding conversion campaigns by half.
+- **The original single-exponential DFM makes it worse** (calibration 1.94): one exponential
+  cannot fit "buys within the hour" and "comes back weeks later" at once, and a 63 h window cannot
+  identify an 18-day tail. A two-component mixture fixes most of the bias (0.91).
+- **All DFM variants lose ~0.02 AUC against the naive model.** Their likelihood treats recent,
+  not-yet-converted clicks as partly positive, which adds label noise to the ranking signal.
+- **The best practical fix is the simplest**: keep the naive model's ranking and divide by the
+  expected share of conversions visible at training time, E[F(elapsed)], from a matured delay
+  distribution. It restores calibration (1.01) with no AUC loss and the best non-oracle LogLoss.
+- The remaining 0.025 AUC gap to the oracle comes from labels that are missing on recent clicks;
+  rescaling cannot recover ranking information, only scale. Closing it needs label correction
+  per example (e.g. importance weighting) or retraining once labels mature.
+- Caveat: this extract has no separate earlier period, so the "history" delay distribution is
+  taken from the training clicks' complete delays. Only the distribution is used, not any
+  click's label; in production it would come from an older, matured period.
 
 ## Quickstart
 
