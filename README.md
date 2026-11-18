@@ -1,5 +1,8 @@
 # ads-ctr-cvr-ranking
 
+[![tests](https://github.com/samyoungjunkim-pixel/ads-ctr-cvr-ranking/actions/workflows/tests.yml/badge.svg)](https://github.com/samyoungjunkim-pixel/ads-ctr-cvr-ranking/actions/workflows/tests.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 CTR / CVR prediction, calibration and value-based bidding on Criteo's public
 [Attribution dataset](https://huggingface.co/datasets/criteo/criteo-attribution-dataset),
 built as an end-to-end **ads quality & ranking** pipeline.
@@ -263,14 +266,12 @@ Findings:
   calibrated. **Peeking 20 times inflates false positives to 24%**, about 5x; interim looks need
   a sequential method (alpha spending / always-valid p-values) or a fixed horizon.
 
-### Criteo DAC: CTR benchmark
+### Next: Criteo DAC CTR benchmark (planned)
 
-Criteo DAC, first 2M rows, time-based split (80/10/10). Test set.
-
-| Model | AUC | LogLoss | NE | Calibration |
-|---|---|---|---|---|
-| XGBoost (int + count-encoded cat) | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
-| DCN-v2 | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+`make data prep train-gbdt` prepares the Criteo Display Advertising Challenge data
+(time-based 80/10/10 split, log-transformed integers, train-window vocabulary) and trains an
+XGBoost CTR baseline. The planned stage adds DCN-v2 / DeepFM on the same split for comparison
+with published results.
 
 ## Quickstart
 
@@ -362,3 +363,8 @@ repository; the scripts download them from the original source.
 
 ### Industry context
 - Baek, H. J., Ketha, H., Ray, J., Min, J., Sabbah, M., Panchal, R., Adunuthula, S., Kalva, T. R., & Tan, E. (2023, September 8). Meet Coupang's machine learning platform. *Coupang Engineering Blog*. https://medium.com/coupang-engineering/meet-coupangs-machine-learning-platform-cd00e9ccc172
+
+## License
+
+Code: [MIT](LICENSE). The Criteo datasets are not part of this repository and remain under
+Criteo's own terms (the Attribution dataset is released under CC BY-NC-SA 4.0).

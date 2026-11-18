@@ -2,6 +2,7 @@
 name = "adsrank"
 version = "0.1.0"
 description = "CTR / CVR prediction and ad ranking on Criteo public datasets"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "numpy",
@@ -19,7 +20,7 @@ nn = ["torch"]
 dev = ["pytest"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
