@@ -473,12 +473,15 @@ repository; the scripts download them from the original source.
 ## Future work
 
 - Benchmark DeepFM / DCN-v2 on Criteo DAC against published results (loader and XGBoost baseline
-  are in `prep.py` / `train_gbdt.py`).
+  are in `prep.py` / `train_gbdt.py`; the original download link is retired, candidate mirror:
+  https://huggingface.co/datasets/reczoo/Criteo_x4).
 - CUPED variance reduction for the A/B test, and a traffic-shaped spend plan for the pacer.
 
 ## References
 
 ### Data
+- Criteo AI Lab. (2017). *Criteo attribution modeling for bidding dataset* [Data set]. https://ailab.criteo.com/criteo-attribution-modeling-bidding-dataset/
+  (CC BY-NC-SA 4.0; files mirrored at https://huggingface.co/datasets/criteo/criteo-attribution-dataset)
 - Diemert, E., Meynet, J., Galland, P., & Lefortier, D. (2017). Attribution modeling increases efficiency of bidding in display advertising. In *Proceedings of the ADKDD'17* (Article 2, pp. 1–6). ACM. https://doi.org/10.1145/3124749.3124752
 
 ### Modeling and metrics
