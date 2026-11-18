@@ -15,7 +15,14 @@ entire impression space.
 cvr_loss="clicked" trains the same network the conventional way (CVR loss on clicked rows
 only) so the two objectives can be compared with everything else held fixed.
 """
+import os
 import time
+
+# PyTorch CPU wheels call Intel MKL for some vector math (e.g. the sqrt inside Adam). MKL picks an
+# AVX-512 code path when the CPU reports AVX-512; on some WSL / virtualized laptops that path crashes
+# with "Illegal instruction". Default to the AVX2 path (override by setting the variable yourself).
+# Must be set before torch is imported.
+os.environ.setdefault("MKL_ENABLE_INSTRUCTIONS", "AVX2")
 
 import numpy as np
 import pandas as pd
