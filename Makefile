@@ -4,7 +4,7 @@ RAW = $(DATA_DIR)/train_$(ROWS).txt
 PARQUET = $(DATA_DIR)/criteo_$(ROWS).parquet
 MLFLOW ?=
 
-.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid test all
+.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid abtest test all
 
 ATTR_ROWS ?= 2000000
 
@@ -38,6 +38,10 @@ calibrate:
 # Bidding replay: fixed budget, value-vs-spend curves, ROI-target auto-bidding, budget pacing
 bid:
 	python -m adsrank.run_bidding --preds $(DATA_DIR)/preds_test.parquet
+
+# Simulated A/B test of bidding policies (user-level split, SRM, delta method, power, A/A, peeking)
+abtest:
+	python -m adsrank.run_abtest --preds $(DATA_DIR)/preds_test.parquet
 
 prep: $(PARQUET)
 $(PARQUET): $(RAW)

@@ -59,7 +59,7 @@ def main() -> None:
     out = Path(a.results)
     out.mkdir(exist_ok=True)
 
-    df = load(a.data, extra=["cost"])
+    df = load(a.data, extra=["cost", "uid"])
     feats = build_features(df, time_split(df))
     tr, va, te = (feats[feats.split == s] for s in ("train", "valid", "test"))
     campaign_te = df.loc[te.index, "campaign"].to_numpy()
@@ -113,6 +113,7 @@ def main() -> None:
         pd.DataFrame({
             "timestamp": df.loc[split_df.index, "timestamp"].to_numpy(),
             "campaign": df.loc[split_df.index, "campaign"].to_numpy(),
+            "uid": df.loc[split_df.index, "uid"].to_numpy(),
             "cost": df.loc[split_df.index, "cost"].to_numpy(), "cpo": df.loc[split_df.index, "cpo"].to_numpy(),
             "click": split_df.click.to_numpy(), "attribution": split_df.attribution.to_numpy(),
             "p_ctr_raw": raw[0], "p_cvr_raw": raw[1], "p_ctr": cal[0], "p_cvr": cal[1],

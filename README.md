@@ -38,6 +38,7 @@ advertiser ROI and platform revenue. This repository builds and evaluates each p
 | CVR sample selection bias | ESMM vs click-only CVR loss (controlled comparison) | done |
 | Probability accuracy for pricing | Platt / Isotonic, ECE, per-campaign calibration, downsampling correction | done |
 | Automated bidding, advertiser ROI | Second-price replay, value-based bids, ROI-target auto-bidding, adaptive budget pacing | done |
+| Online experimentation | User-level A/B test, SRM, delta method, power, A/A, peeking | implemented, results pending |
 | Deep CTR models | DCN-v2 / DeepFM on Criteo DAC | planned |
 | Delayed conversions | Delayed-feedback CVR | planned |
 | Low-latency serving | KServe deployment, p99 latency | planned |
@@ -210,6 +211,21 @@ Findings:
 
 Raw numbers: [results/bidding.json](results/bidding.json).
 
+### A/B test of bidding policies (stage 5b)
+
+`make abtest` runs a simulated online experiment on the test window: users are hash-assigned
+50/50 (user-level split, so one user never sees both policies), control bids CTR-only,
+treatment bids value-based (`cpo x pCTR x pCVR`, calibrated). Each arm's bid multiplier is tuned
+on the validation window for the same budget share, so nothing is fitted on the test window.
+
+Reported: sample ratio mismatch check, conversion value per user (Welch CI), conversions and
+spend per user, ROI as a ratio metric with delta-method variance, power analysis (MDE and the
+sample size needed for the observed lift), an A/A false-positive check over 200 random splits,
+and the false-positive rate when an A/A test is peeked at 20 times and stopped at the first
+p < 0.05.
+
+_Results: tbd_
+
 ### Criteo DAC: CTR benchmark
 
 Criteo DAC, first 2M rows, time-based split (80/10/10). Test set.
@@ -232,6 +248,7 @@ make train-attribution ATTR_ROWS=2000000  # CTR + CVR XGBoost baseline -> result
 make train-esmm ATTR_ROWS=2000000         # ESMM vs click-only CVR loss -> results/attribution_*.json
 make calibrate ATTR_ROWS=2000000          # calibration study + test predictions
 make bid                                  # bidding / auction replay on the test window
+make abtest                               # simulated A/B test of bidding policies
 make prep ROWS=2000000
 make train-gbdt ROWS=2000000 MLFLOW=http://localhost:5000   # MLFLOW is optional
 ```
@@ -251,6 +268,8 @@ src/adsrank/
   run_calibration.py    calibration study on Criteo Attribution
   bidding.py            second-price replay, budget / ROI-target auto-bidding, PI pacing
   run_bidding.py        bidding policy comparison
+  abtest.py             hash assignment, SRM, Welch / delta-method tests, MDE and sample size
+  run_abtest.py         A/B, A/A and peeking experiments on bidding policies
 scripts/
   download_criteo.sh        stream the first N rows without downloading the full 4.3GB archive
   download_attribution.py   stream N rows of Criteo Attribution from Hugging Face into Parquet
