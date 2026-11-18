@@ -47,6 +47,22 @@ def preprocess(df: pd.DataFrame, min_count: int = 10) -> tuple[pd.DataFrame, dic
     return out, vocab_sizes
 
 
+def read_raw(path: str, nrows: int | None = None) -> pd.DataFrame:
+    """Read Criteo DAC in either layout:
+      - Kaggle original train.txt: tab-separated, no header
+      - CSV mirrors (e.g. reczoo/Criteo_x4): comma-separated with a header (Label, I1..I13, C1..C26)
+    Rows must stay in time order (the original file is ordered by time)."""
+    opener = __import__("gzip").open if str(path).endswith(".gz") else open
+    with opener(path, "rt") as f:
+        first = f.readline()
+    if "," in first and first.lower().startswith("label"):
+        df = pd.read_csv(path, nrows=nrows, dtype={c: "string" for c in CAT})
+        df.columns = [c.lower() if c.lower() == "label" else c for c in df.columns]
+        return df[COLS]
+    return pd.read_csv(path, sep="\t", header=None, names=COLS, nrows=nrows,
+                       dtype={c: "string" for c in CAT})
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--input", required=True)
@@ -55,8 +71,7 @@ def main() -> None:
     p.add_argument("--min-count", type=int, default=10)
     a = p.parse_args()
 
-    df = pd.read_csv(a.input, sep="\t", header=None, names=COLS, nrows=a.nrows,
-                     dtype={c: "string" for c in CAT})
+    df = read_raw(a.input, a.nrows)
     out, vocab = preprocess(df, a.min_count)
     counts = out.split.value_counts()
     print(f"rows {len(out):,}  CTR {out.label.mean():.4f}  "

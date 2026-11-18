@@ -4,7 +4,7 @@ RAW = $(DATA_DIR)/train_$(ROWS).txt
 PARQUET = $(DATA_DIR)/criteo_$(ROWS).parquet
 MLFLOW ?=
 
-.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid abtest train-deepctr delayed export bench serve loadtest image deploy loadtest-cluster test all
+.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid abtest train-deepctr delayed export bench serve loadtest image deploy loadtest-cluster dac-deep test all
 
 ATTR_ROWS ?= 2000000
 
@@ -94,6 +94,11 @@ $(PARQUET): $(RAW)
 
 train-gbdt: $(PARQUET)
 	python -m adsrank.train_gbdt --data $(PARQUET) $(if $(MLFLOW),--mlflow $(MLFLOW),)
+
+# DeepFM and DCN-v2 on Criteo DAC (same split as train-gbdt)
+dac-deep: $(PARQUET)
+	python -m adsrank.train_dac_deep --data $(PARQUET) --model deepfm
+	python -m adsrank.train_dac_deep --data $(PARQUET) --model dcnv2
 
 test:
 	pytest -q

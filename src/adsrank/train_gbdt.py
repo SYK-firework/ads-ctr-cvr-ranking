@@ -31,6 +31,7 @@ def main() -> None:
     a.add_argument("--data", required=True)
     a.add_argument("--mlflow", default=None, help="MLflow tracking URI, e.g. http://localhost:5000")
     a.add_argument("--jobs", type=int, default=4)
+    a.add_argument("--out", default="results/dac_xgboost.json")
     a = a.parse_args()
 
     df = pd.read_parquet(a.data)
@@ -38,6 +39,11 @@ def main() -> None:
     print("\n== XGBoost (test) ==")
     for k, v in r.items():
         print(f"{k:20s} {v:.4f}")
+    import json
+    from pathlib import Path
+    Path(a.out).parent.mkdir(exist_ok=True)
+    Path(a.out).write_text(json.dumps({"model": "xgboost", "data": a.data} | r, indent=1))
+    print(f"saved {a.out}")
     imp = pd.Series(model.feature_importances_, FEATURES).sort_values(ascending=False)
     print("\nTop 10 features:\n", imp.head(10).round(3).to_string())
 

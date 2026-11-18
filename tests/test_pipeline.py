@@ -45,3 +45,25 @@ def test_train_gbdt_learns_signal():
     out, _ = preprocess(fake_criteo(20000), min_count=5)
     _, _, r = train(out, params={"n_estimators": 50}, n_jobs=2, verbose=False)
     assert r["test_auc"] > 0.55
+
+
+def test_read_raw_accepts_tsv_and_csv_mirror(tmp_path):
+    from adsrank.prep import read_raw
+    df = fake_criteo(50)
+    tsv, csv = tmp_path / "train.txt", tmp_path / "train.csv"
+    df.to_csv(tsv, sep="\t", header=False, index=False)
+    df.rename(columns={"label": "Label"}).to_csv(csv, index=False)
+    a, b = read_raw(str(tsv)), read_raw(str(csv))
+    assert list(a.columns) == list(b.columns) == COLS
+    assert (a.label.to_numpy() == b.label.to_numpy()).all()
+    assert a["C1"].fillna("").tolist() == b["C1"].fillna("").tolist()
+
+
+def test_dac_deep_models_learn():
+    import pytest
+    pytest.importorskip("torch")
+    from adsrank.train_dac_deep import run
+    out, vocab = preprocess(fake_criteo(30000), min_count=5)
+    for name in ("deepfm", "dcnv2"):
+        r = run(out, vocab, name, epochs=2, batch=1024, lr=5e-3, threads=2, log=lambda *_: None)
+        assert r["test_auc"] > 0.55
