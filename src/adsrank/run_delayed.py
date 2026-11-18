@@ -16,7 +16,8 @@ import torch
 
 from adsrank.attribution import build_features, load, time_split
 from adsrank.deepctr import DCNv2, predict_logits, train_binary
-from adsrank.delayed import dfm_loss, observed_labels
+from adsrank.delayed import (ExpMixtureDelay, empirical_survival, known_delay_loss, mixture_dfm_loss,
+                              observed_labels)
 from adsrank.esmm import NN_NUMS, to_tensors, vocab_sizes
 from adsrank.metrics import ads_metrics
 from adsrank.optim import adam
@@ -26,24 +27,23 @@ def sigmoid(z):
     return 1 / (1 + np.exp(-np.clip(z, -30, 30)))
 
 
-def train_dfm(model, x_cat, x_num, y_obs, elapsed, delay, init_rate: float, epochs: int = 5,
-              batch: int = 4096, lr: float = 1e-3, log=print):
-    log_lambda = torch.nn.Parameter(torch.tensor(float(np.log(init_rate))))
-    opt = adam(list(model.parameters()) + [log_lambda], lr=lr)
+def train_custom(model, loss_fn, extra_params, x_cat, x_num, epochs: int = 5, batch: int = 4096,
+                 lr: float = 1e-3, name: str = "", log=print, describe=lambda: ""):
+    """Generic minibatch loop: loss_fn(logits, idx) -> scalar."""
+    opt = adam(list(model.parameters()) + list(extra_params), lr=lr)
     n, t0 = len(x_cat), time.time()
     for ep in range(epochs):
         model.train()
         perm, total = torch.randperm(n), 0.0
         for i in range(0, n, batch):
             idx = perm[i:i + batch]
-            loss = dfm_loss(model(x_cat[idx], x_num[idx]), log_lambda, y_obs[idx], elapsed[idx], delay[idx])
+            loss = loss_fn(model(x_cat[idx], x_num[idx]), idx)
             opt.zero_grad()
             loss.backward()
             opt.step()
             total += loss.item() * len(idx)
-        log(f"dfm epoch {ep + 1}: nll {total / n:.5f}, mean delay {1 / log_lambda.exp().item() / 3600:.1f}h "
-            f"({time.time() - t0:.0f}s)")
-    return model.eval(), float(log_lambda.exp().item())
+        log(f"{name} epoch {ep + 1}: nll {total / n:.5f}{describe()} ({time.time() - t0:.0f}s)")
+    return model.eval()
 
 
 def main() -> None:
@@ -79,19 +79,43 @@ def main() -> None:
     def fit_eval(name, mask, labels):
         m = train_binary(DCNv2(vs, len(NN_NUMS)), (Xtr[0][mask], Xtr[1][mask], labels[mask]),
                          (Xva[0], Xva[1], Xva[3]), a.epochs, name=name)
-        report[name] = ads_metrics(y_te, sigmoid(predict_logits(m, Xte[0], Xte[1])), "cvr") | {"train_clicks": int(mask.sum())}
+        p = sigmoid(predict_logits(m, Xte[0], Xte[1]))
+        report[name] = ads_metrics(y_te, p, "cvr") | {"train_clicks": int(mask.sum())}
+        return p
 
     all_rows = torch.ones(len(tr), dtype=torch.bool)
     fit_eval("oracle", all_rows, torch.as_tensor(y_true))
-    fit_eval("naive", all_rows, torch.as_tensor(y_obs))
+    p_naive = fit_eval("naive", all_rows, torch.as_tensor(y_obs))
     wait = torch.as_tensor(elapsed >= a.wait_hours * 3600)
     fit_eval(f"wait_{a.wait_hours:g}h", wait, torch.as_tensor(y_obs))
 
-    model, lam = train_dfm(DCNv2(vs, len(NN_NUMS)), Xtr[0], Xtr[1], torch.as_tensor(y_obs),
-                           torch.as_tensor(elapsed), torch.as_tensor(delay),
-                           init_rate=1 / (np.nanmean(delay) + 1), epochs=a.epochs)
-    report["dfm"] = ads_metrics(y_te, sigmoid(predict_logits(model, Xte[0], Xte[1])), "cvr") | {
-        "train_clicks": len(tr), "fitted_mean_delay_hours": 1 / lam / 3600}
+    Y, E, D = torch.as_tensor(y_obs), torch.as_tensor(elapsed), torch.as_tensor(delay)
+
+    def eval_p(model):
+        return ads_metrics(y_te, sigmoid(predict_logits(model, Xte[0], Xte[1])), "cvr")
+
+    # DFM, delay learned jointly: 1 exponential (Chapelle, 2014) and a 2-component mixture
+    for k, name in ((1, "dfm_exp"), (2, "dfm_mix2")):
+        dm = ExpMixtureDelay(k)
+        m = train_custom(DCNv2(vs, len(NN_NUMS)),
+                         lambda z, idx, dm=dm: mixture_dfm_loss(z, dm, Y[idx], E[idx], D[idx]),
+                         dm.parameters(), Xtr[0], Xtr[1], a.epochs, name=name,
+                         describe=lambda dm=dm: f", mean delay {dm.mean_hours():.1f}h")
+        report[name] = eval_p(m) | {"train_clicks": len(tr), "fitted_mean_delay_hours": dm.mean_hours()}
+
+    # DFM with the delay distribution fixed from matured history. This extract has no separate
+    # earlier period, so the complete delays of the training clicks stand in for that history
+    # (only the delay distribution is used, not any click's label).
+    log_s = torch.as_tensor(np.log(np.maximum(empirical_survival(delay[y_true == 1], elapsed), 1e-6)))
+    m = train_custom(DCNv2(vs, len(NN_NUMS)), lambda z, idx: known_delay_loss(z, Y[idx], log_s[idx]),
+                     [], Xtr[0], Xtr[1], a.epochs, name="dfm_hist")
+    report["dfm_hist"] = eval_p(m) | {"train_clicks": len(tr)}
+
+    # Simplest practical fix: keep the naive model's ranking and rescale it by the share of
+    # conversions expected to be visible at training time, E[F(elapsed)], from the same history.
+    visible = float(np.mean(1 - np.exp(log_s.numpy())))
+    report["naive_rescaled"] = ads_metrics(y_te, np.clip(p_naive / visible, 1e-6, 1 - 1e-6), "cvr") | {
+        "train_clicks": len(tr), "expected_visible_share": visible}
 
     Path("results").mkdir(exist_ok=True)
     Path("results/delayed_feedback.json").write_text(json.dumps(report, indent=1))
@@ -104,7 +128,7 @@ def main() -> None:
     print("\n== CVR on test clicks (complete labels) ==")
     for k, v in report.items():
         if k != "stats":
-            print(f"{k:10s} AUC {v['cvr_auc']:.4f}  LogLoss {v['cvr_logloss']:.4f}  NE {v['cvr_ne']:.4f}  "
+            print(f"{k:15s} AUC {v['cvr_auc']:.4f}  LogLoss {v['cvr_logloss']:.4f}  NE {v['cvr_ne']:.4f}  "
                   f"calibration {v['cvr_calibration']:.3f}  train clicks {v['train_clicks']:,}")
     print("\nsaved results/delayed_feedback.json")
 

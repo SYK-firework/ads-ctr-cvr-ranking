@@ -43,3 +43,51 @@ def dfm_loss(logit, log_lambda, y_obs, elapsed, delay):
     # log(1 - p + p e^{-lam e}) = logaddexp(log(1-p), log p - lam e)
     neg = torch.logaddexp(log_1mp, log_p - lam * elapsed)
     return -torch.where(y_obs > 0, pos, neg).mean()
+
+
+class ExpMixtureDelay(torch.nn.Module):
+    """Delay distribution as a mixture of K exponentials (e.g. "buys right away" + "comes back later").
+
+    K = 1 is the original DFM. Rates are initialized on a log grid between init_hours."""
+
+    def __init__(self, k: int = 2, init_hours: tuple[float, float] = (1.0, 200.0)):
+        super().__init__()
+        hours = np.geomspace(init_hours[0], init_hours[1], k) if k > 1 else np.array([init_hours[1]])
+        self.log_rate = torch.nn.Parameter(torch.tensor(np.log(1 / (hours * 3600)), dtype=torch.float32))
+        self.weight_logit = torch.nn.Parameter(torch.zeros(k))
+
+    def _log_w(self):
+        return torch.log_softmax(self.weight_logit, 0)
+
+    def log_pdf(self, d):                        # log sum_k w_k lam_k exp(-lam_k d)
+        d = torch.nan_to_num(d, nan=0.0)[:, None]
+        return torch.logsumexp(self._log_w() + self.log_rate - self.log_rate.exp() * d, dim=1)
+
+    def log_surv(self, e):                       # log P(delay > e) = log sum_k w_k exp(-lam_k e)
+        return torch.logsumexp(self._log_w() - self.log_rate.exp() * e[:, None], dim=1)
+
+    def mean_hours(self) -> float:
+        w = torch.softmax(self.weight_logit, 0)
+        return float((w / self.log_rate.exp()).sum() / 3600)
+
+
+def mixture_dfm_loss(logit, delay_model: ExpMixtureDelay, y_obs, elapsed, delay):
+    """DFM likelihood with a parametric delay model learned jointly with p(x)."""
+    log_p, log_1mp = F.logsigmoid(logit), F.logsigmoid(-logit)
+    pos = log_p + delay_model.log_pdf(delay)
+    neg = torch.logaddexp(log_1mp, log_p + delay_model.log_surv(elapsed))
+    return -torch.where(y_obs > 0, pos, neg).mean()
+
+
+def empirical_survival(delays_hist: np.ndarray, elapsed: np.ndarray) -> np.ndarray:
+    """P(delay > e) from a matured historical sample of conversion delays."""
+    d = np.sort(np.asarray(delays_hist, np.float64))
+    return (1 - np.searchsorted(d, elapsed, side="right") / len(d)).astype(np.float32)
+
+
+def known_delay_loss(logit, y_obs, log_surv_e):
+    """DFM with a fixed, known delay distribution: only p(x) is learned.
+    Converted: log p (the delay density does not depend on p). Not yet: log(1 - p + p S(e))."""
+    log_p, log_1mp = F.logsigmoid(logit), F.logsigmoid(-logit)
+    neg = torch.logaddexp(log_1mp, log_p + log_surv_e)
+    return -torch.where(y_obs > 0, log_p, neg).mean()

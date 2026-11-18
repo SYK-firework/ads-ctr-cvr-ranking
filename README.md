@@ -298,8 +298,10 @@ as the XGBoost baseline (results are in the main table above).
 `make delayed` replays the training cutoff at the end of the training window: conversions that
 happened after it are hidden, as they would be in production. All variants share the DCN-v2
 network and are scored on test clicks against complete labels: oracle (complete labels), naive
-(observed labels), a 24-hour waiting window, and the delayed feedback model (DFM), which fits
-the conversion probability and an exponential conversion delay jointly by maximum likelihood.
+(observed labels), a 24-hour waiting window, the delayed feedback model (DFM) with an exponential
+delay (Chapelle, 2014) and with a two-component exponential mixture, DFM with the delay
+distribution fixed from matured history, and the naive model rescaled by the expected share of
+visible conversions.
 
 _Results: tbd_
 
