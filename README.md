@@ -37,7 +37,11 @@ CVR is evaluated on clicked impressions; CTCVR = pCTR x pCVR on all impressions.
 | Model | CTR AUC | CTR NE | CTR Calib. | CVR AUC | CVR NE | CVR Calib. | CTCVR AUC |
 |---|---|---|---|---|---|---|---|
 | XGBoost, separate CTR / CVR | 0.6766 | 0.9273 | 0.966 | 0.8502 | 0.7406 | 1.023 | 0.8502 |
-| ESMM | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| NN, CVR loss on clicks only | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| ESMM (CTCVR loss on all impressions) | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+
+The two neural rows share the same architecture (shared embeddings, CTR and CVR towers) and
+differ only in how the CVR tower is trained, which isolates the effect of the ESMM objective.
 
 Observations from the XGBoost baseline ([results/attribution_xgb.json](results/attribution_xgb.json)):
 
@@ -66,11 +70,13 @@ Criteo DAC, first 2M rows, time-based split (80/10/10). Test set.
 
 ```bash
 uv venv && source .venv/bin/activate
-make install              # package + mlflow + pytest
+make install              # package + mlflow + datasets + pytest
+uv pip install torch --index-url https://download.pytorch.org/whl/cpu   # for ESMM (CPU build)
 make test                 # smoke tests on synthetic Criteo-format data
 make data ROWS=2000000    # stream the first 2M rows of Criteo DAC into data/
 make data-attribution ATTR_ROWS=2000000   # stream 2M rows of Criteo Attribution from Hugging Face
 make train-attribution ATTR_ROWS=2000000  # CTR + CVR XGBoost baseline -> results/attribution_xgb.json
+make train-esmm ATTR_ROWS=2000000         # ESMM vs click-only CVR loss -> results/attribution_*.json
 make prep ROWS=2000000
 make train-gbdt ROWS=2000000 MLFLOW=http://localhost:5000   # MLFLOW is optional
 ```
@@ -84,6 +90,8 @@ src/adsrank/
   train_gbdt.py   XGBoost CTR baseline with optional MLflow tracking
   attribution.py        Criteo Attribution features, leakage-safe columns, time split
   train_attribution.py  CTR + CVR XGBoost baseline, CTCVR evaluation
+  esmm.py               ESMM in PyTorch (shared embeddings, CTR / CVR towers, pCTCVR = pCTR x pCVR)
+  train_esmm.py         train ESMM or the same network with a click-only CVR loss
 scripts/
   download_criteo.sh        stream the first N rows without downloading the full 4.3GB archive
   download_attribution.py   stream N rows of Criteo Attribution from Hugging Face into Parquet

@@ -14,6 +14,7 @@ dependencies = [
 [project.optional-dependencies]
 tracking = ["mlflow"]
 data = ["datasets"]
+nn = ["torch"]
 dev = ["pytest"]
 
 [build-system]
@@ -25,3 +26,4 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]

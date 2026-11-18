@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 import xgboost as xgb
 
-from adsrank.attribution import FEATURES, build_features, time_split
+from adsrank.attribution import FEATURES, build_features, load, time_split
 from adsrank.metrics import ads_metrics
 
 PARAMS = dict(n_estimators=1000, max_depth=7, learning_rate=0.08, subsample=0.8,
@@ -57,7 +57,7 @@ def main() -> None:
     a.add_argument("--out", default="results/attribution_xgb.json")
     a = a.parse_args()
 
-    df = pd.read_parquet(a.data)
+    df = load(a.data)
     ctr, cvr, r = run(df, a.jobs)
     print("\n== Criteo Attribution, XGBoost (test) ==")
     for k, v in r.items():

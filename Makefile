@@ -4,12 +4,13 @@ RAW = $(DATA_DIR)/train_$(ROWS).txt
 PARQUET = $(DATA_DIR)/criteo_$(ROWS).parquet
 MLFLOW ?=
 
-.PHONY: install data data-attribution prep train-gbdt train-attribution test all
+.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm test all
 
 ATTR_ROWS ?= 2000000
 
 install:
 	uv pip install -e ".[tracking,dev,data]"
+	uv pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 # Criteo Attribution (impression -> click -> conversion, with cost): stream a subset from Hugging Face
 data-attribution:
@@ -23,6 +24,11 @@ ATTR_PARQUET = $(DATA_DIR)/attribution_$(ATTR_ROWS).parquet
 
 train-attribution:
 	python -m adsrank.train_attribution --data $(ATTR_PARQUET) $(if $(MLFLOW),--mlflow $(MLFLOW),)
+
+# ESMM vs the same network with a click-only CVR loss
+train-esmm:
+	python -m adsrank.train_esmm --data $(ATTR_PARQUET) --cvr-loss esmm $(if $(MLFLOW),--mlflow $(MLFLOW),)
+	python -m adsrank.train_esmm --data $(ATTR_PARQUET) --cvr-loss clicked $(if $(MLFLOW),--mlflow $(MLFLOW),)
 
 prep: $(PARQUET)
 $(PARQUET): $(RAW)

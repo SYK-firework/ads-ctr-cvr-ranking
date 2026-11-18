@@ -21,6 +21,14 @@ FEATURES = CATS + NUMS
 LEAKY = ["conversion", "conversion_timestamp", "conversion_id", "click_pos", "click_nb"]
 
 
+USED = CATS + ["timestamp", "time_since_last_click", "cpo", "click", "attribution"]
+
+
+def load(path: str, extra: list[str] | None = None) -> pd.DataFrame:
+    """Read only the columns the models use (keeps memory low on laptops)."""
+    return pd.read_parquet(path, columns=USED + (extra or []))
+
+
 def time_split(df: pd.DataFrame, valid_frac: float = 0.1, test_frac: float = 0.2) -> pd.Series:
     """Split by timestamp quantiles: earliest -> train, then valid, latest -> test."""
     t = df["timestamp"]
