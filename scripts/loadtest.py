@@ -56,8 +56,11 @@ async def main_async(a):
             report.append(r)
             print(f"{rps:>10.0f} {r['achieved_rps']:>9.1f} {r['p50_ms']:>8.1f} {r['p90_ms']:>8.1f} "
                   f"{r['p99_ms']:>8.1f} {r['errors']:>7d}")
+            if r["p99_ms"] > a.stop_p99_ms or r["errors"] or r["achieved_rps"] < 0.9 * rps:
+                print(f"saturated at {rps:.0f} rps (p99 {r['p99_ms']:.0f} ms); skipping higher rates")
+                break
     Path(a.out).parent.mkdir(exist_ok=True)
-    Path(a.out).write_text(json.dumps({"url": a.url, "stages": report}, indent=1))
+    Path(a.out).write_text(json.dumps({"label": a.label, "url": a.url, "batch": a.batch, "stages": report}, indent=1))
     if a.plot:
         import matplotlib
         matplotlib.use("Agg")
@@ -79,6 +82,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--url", default="http://localhost:8080/predict")
     p.add_argument("--samples", default="serving/model/sample_requests.json")
+    p.add_argument("--label", default=None, help="name stored in the output, e.g. local-1-worker")
     p.add_argument("--rps", default="25,50,100,200")
     p.add_argument("--seconds", type=float, default=20)
     p.add_argument("--batch", type=int, default=50, help="ad candidates scored per request")
@@ -86,6 +90,7 @@ def main():
     p.add_argument("--timeout", type=float, default=10)
     p.add_argument("--out", default="results/serving_loadtest.json")
     p.add_argument("--plot", default=None, help="optional PNG path for latency vs throughput")
+    p.add_argument("--stop-p99-ms", type=float, default=1000, help="stop once p99 exceeds this")
     asyncio.run(main_async(p.parse_args()))
 
 

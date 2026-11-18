@@ -350,7 +350,31 @@ run an open-loop load test (fixed request rate, latency measured from the schedu
 queueing is included and tail latency is not under-reported). The same image deploys to the kind
 cluster with KServe (`make image deploy`), with CPU / memory limits and 1-3 replica autoscaling.
 
-_Results: tbd_
+Results on a WSL laptop (Python server, 1 process, load generator on the same machine):
+
+| Candidates per request | Model-only p50 | Model-only p99 |
+|---|---|---|
+| 1 | 0.78 ms | 1.76 ms |
+| 50 | 1.92 ms | 2.91 ms |
+| 200 | 4.83 ms | 20.4 ms |
+| 1,000 | 18.1 ms | 41.0 ms |
+
+| HTTP, 50 candidates / request | Achieved rps | p50 | p90 | p99 |
+|---|---|---|---|---|
+| target 25 rps | 25.0 | 12.0 ms | 17.6 ms | 26.0 ms |
+| target 50 rps | 50.0 | 9.6 ms | 167 ms | 1,303 ms |
+| target 100 rps | 56.3 (saturated) | 8.1 s | 21.4 s | 28.0 s |
+
+- The training-serving skew check passed on the real data (max difference 0.0).
+- **The model is not the bottleneck**: scoring 50 candidates takes ~2 ms, but a request takes
+  ~10 ms end to end; JSON parsing and response building in Python dominate.
+- **One process saturates at ~55 requests/s (~2,800 candidates/s)**. Past that, requests queue
+  and p99 goes from 26 ms to seconds; the open-loop test shows this, a closed loop would hide it.
+- At ~12K requests/s (1B impressions/day) this would need hundreds of processes. The usual
+  levers: horizontal scaling (KServe HPA below), a compiled serving runtime (e.g. Triton's FIL
+  backend for tree models), and a binary protocol (gRPC / protobuf) instead of JSON.
+
+_Cluster results: tbd_
 
 ## Quickstart
 
