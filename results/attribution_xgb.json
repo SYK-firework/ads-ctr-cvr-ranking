@@ -1,0 +1,22 @@
+{
+ "data": "data/attribution_2000000.parquet",
+ "rows": 2000000,
+ "ctr_auc": 0.6765752902686972,
+ "ctr_logloss": 0.6051429499036611,
+ "ctr_ne": 0.9273136632222243,
+ "ctr_calibration": 0.9660283908266805,
+ "cvr_auc": 0.8502199795177428,
+ "cvr_logloss": 0.19487499575240508,
+ "cvr_ne": 0.7405700951110903,
+ "cvr_calibration": 1.0226577662879708,
+ "ctcvr_auc": 0.8501599938001652,
+ "ctcvr_logloss": 0.09558540020877827,
+ "ctcvr_ne": 0.7828206010873722,
+ "ctcvr_calibration": 0.9884865343763507,
+ "train_seconds": 71.84625315666199,
+ "rows_train": 1400000,
+ "rows_valid": 199997,
+ "rows_test": 400003,
+ "base_ctr": 0.35854481091391815,
+ "base_cvr": 0.0737140825134745
+}

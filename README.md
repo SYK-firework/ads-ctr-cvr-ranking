@@ -36,8 +36,18 @@ CVR is evaluated on clicked impressions; CTCVR = pCTR x pCVR on all impressions.
 
 | Model | CTR AUC | CTR NE | CTR Calib. | CVR AUC | CVR NE | CVR Calib. | CTCVR AUC |
 |---|---|---|---|---|---|---|---|
-| XGBoost, separate CTR / CVR | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+| XGBoost, separate CTR / CVR | 0.6766 | 0.9273 | 0.966 | 0.8502 | 0.7406 | 1.023 | 0.8502 |
 | ESMM | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ |
+
+Observations from the XGBoost baseline ([results/attribution_xgb.json](results/attribution_xgb.json)):
+
+- The strongest CTR feature is time since the user's last click. Criteo traffic is largely
+  retargeting, so recent engagement dominates the click signal.
+- CTR calibration is 0.966: the test window has a higher base CTR (35.9%) than training,
+  a small temporal drift that a frequently retrained or recalibrated model would absorb.
+- CTCVR AUC is almost identical to CVR AUC (0.85016 vs 0.85022): impressions without a click
+  are scored as low as clicked-but-not-converted ones, so ranking by pCTR x pCVR on all
+  impressions is driven mostly by the CVR model.
 
 The public sample keeps a subset of non-clicked impressions, so the base CTR (~35%) is far above
 production levels. Calibration is reported against this sample; correcting for negative
