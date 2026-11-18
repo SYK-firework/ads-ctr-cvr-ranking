@@ -81,10 +81,14 @@ def loss_fn(p_ctr, p_cvr, y_click, y_conv, cvr_loss: str):
     l_ctr = bce(p_ctr.clamp(eps, 1 - eps), y_click)
     if cvr_loss == "esmm":
         return l_ctr + bce((p_ctr * p_cvr).clamp(eps, 1 - eps), y_conv)
-    mask = y_click > 0                                     # conventional: clicked rows only
-    if mask.sum() == 0:
+    # conventional: CVR loss on clicked rows only. A 0/1 weight instead of boolean indexing keeps
+    # tensor shapes fixed (no data-dependent nonzero/gather kernels) and gives the same value.
+    w = y_click
+    n_clicked = w.sum()
+    if n_clicked == 0:
         return l_ctr
-    return l_ctr + bce(p_cvr[mask].clamp(eps, 1 - eps), y_conv[mask])
+    per_row = bce(p_cvr.clamp(eps, 1 - eps), y_conv, reduction="none")
+    return l_ctr + (per_row * w).sum() / n_clicked
 
 
 def save(model: ESMM, directory: str) -> None:
