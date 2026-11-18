@@ -1,0 +1,20 @@
+# data (Criteo license: do not redistribute)
+data/*
+!data/.gitkeep
+*.txt.gz
+*.tar.gz
+*.parquet
+
+# ML artifacts
+mlruns/
+mlartifacts/
+mlflow.db
+*.ubj
+*.pt
+
+# python
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+.ipynb_checkpoints/
