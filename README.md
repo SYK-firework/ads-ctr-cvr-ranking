@@ -18,6 +18,8 @@ On 2M impressions with a held-out, later-in-time test window:
   their errors had been cancelling. Calibrate the quantity you bid on.
 - **Value-based bidding (`cpo x pCTR x pCVR`) buys 43% more conversion value than CTR-only
   bidding at the same budget** in a second-price replay; CTR-only bids halve conversions.
+- **In a user-level A/B test the value-based policy lifts ROI by 48%** (95% CI +35% to +61%);
+  an A/A check confirms the test's 5% false-positive rate, and peeking 20 times inflates it to 24%.
 
 ## Why this project
 
@@ -38,7 +40,7 @@ advertiser ROI and platform revenue. This repository builds and evaluates each p
 | CVR sample selection bias | ESMM vs click-only CVR loss (controlled comparison) | done |
 | Probability accuracy for pricing | Platt / Isotonic, ECE, per-campaign calibration, downsampling correction | done |
 | Automated bidding, advertiser ROI | Second-price replay, value-based bids, ROI-target auto-bidding, adaptive budget pacing | done |
-| Online experimentation | User-level A/B test, SRM, delta method, power, A/A, peeking | implemented, results pending |
+| Online experimentation | User-level A/B test, SRM, delta method, power, A/A, peeking | done |
 | Deep CTR models | DCN-v2 / DeepFM on Criteo DAC | planned |
 | Delayed conversions | Delayed-feedback CVR | planned |
 | Low-latency serving | KServe deployment, p99 latency | planned |
@@ -224,7 +226,37 @@ sample size needed for the observed lift), an A/A false-positive check over 200 
 and the false-positive rate when an A/A test is peeked at 20 times and stopped at the first
 p < 0.05.
 
-_Results: tbd_
+| Metric (treatment vs control) | Lift | 95% CI | p-value |
+|---|---|---|---|
+| Conversion value per user (primary) | **+53.3%** | [+39.8%, +66.9%] | 1.3e-14 |
+| Conversions per user | +123.4% | [+109.9%, +136.9%] | 6.9e-72 |
+| Spend per user (guardrail) | +3.4% | [+1.4%, +5.4%] | 7.8e-04 |
+| ROI (value / spend, delta method) | **+48.3%** | [+35.3%, +61.2%] | 2.4e-13 |
+
+| Check | Result |
+|---|---|
+| Sample ratio mismatch | 162,463 vs 163,387 users, p = 0.106 (no SRM) |
+| MDE at this size (80% power, alpha 0.05) | 19.4% of control on value per user |
+| Users per arm needed for the observed lift | 21,522 |
+| A/A false-positive rate (200 splits) | 6.0% (expected 5%) |
+| A/A false-positive rate with 20 peeks | **24.0%** |
+
+<img src="results/abtest_lift.png" width="60%">
+
+Findings:
+
+- The value-based policy wins clearly: +53% conversion value and +48% ROI per user. Spend is
+  3.4% higher (the multipliers were tuned on the validation window, so budgets do not match
+  exactly), but ROI rising by almost as much as value shows the gain is not just extra spend.
+- The guardrail did move significantly. In a real launch review the +3.4% spend would be
+  called out and either accepted or the treatment re-tuned to budget parity before shipping.
+- **Conversion value per user is a noisy metric** (MDE 19% with 160K users per arm): most users
+  never convert. Detecting a realistic 5% lift would need roughly 2.4M users per arm, which is
+  why ads experiments rely on large traffic and variance reduction (e.g. CUPED with
+  pre-period covariates).
+- The A/A rate (6.0%) is consistent with the nominal 5% given 200 runs, so the test is
+  calibrated. **Peeking 20 times inflates false positives to 24%**, about 5x; interim looks need
+  a sequential method (alpha spending / always-valid p-values) or a fixed horizon.
 
 ### Criteo DAC: CTR benchmark
 
