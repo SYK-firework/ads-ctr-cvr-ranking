@@ -5,6 +5,8 @@
   mean_diff         : difference in means with a Welch standard error, CI and p-value
   ratio_diff        : difference in a ratio metric (e.g. ROI = value / spend) with
                       delta-method variances, computed on unit-level sums
+  cuped             : CUPED variance reduction (Deng et al. 2013): subtract the part of the
+                      metric explained by covariates the treatment cannot affect, then test
   mde / sample_size : power analysis for a two-sided test with equal arms
 
 Units are users: an impression-level split would put the same user in both arms and
@@ -75,6 +77,30 @@ def ratio_diff(num_t, den_t, num_c, den_c, alpha: float = 0.05) -> dict:
     return {"ratio_treat": r_t, "ratio_control": r_c, "diff": float(d), "rel_lift": float(d / r_c),
             "se": float(se), "ci_low": float(d - z * se), "ci_high": float(d + z * se),
             "p_value": float(2 * stats.norm.sf(abs(d / se))) if se > 0 else 1.0}
+
+
+def cuped(y_t, x_t, y_c, x_c, alpha: float = 0.05) -> dict:
+    """Difference in means after CUPED adjustment.
+
+    y_adj = y - (x - mean(x)) @ theta, with theta fitted by least squares on both arms pooled.
+    x must not be affected by the treatment (pre-experiment metrics, or exposure that the
+    treatment cannot change); then E[y_adj] = E[y] in each arm and the estimate stays unbiased,
+    while its variance shrinks by the share of variance the covariates explain (R^2).
+    x may be 1-D (one covariate) or 2-D (units x covariates)."""
+    y_t, y_c = np.asarray(y_t, np.float64), np.asarray(y_c, np.float64)
+    x_t = np.asarray(x_t, np.float64).reshape(len(y_t), -1)
+    x_c = np.asarray(x_c, np.float64).reshape(len(y_c), -1)
+    x, y = np.vstack([x_t, x_c]), np.concatenate([y_t, y_c])
+    mx = x.mean(axis=0)
+    theta, *_ = np.linalg.lstsq(x - mx, y - y.mean(), rcond=None)
+    adj_t, adj_c = y_t - (x_t - mx) @ theta, y_c - (x_c - mx) @ theta
+    r = mean_diff(adj_t, adj_c, alpha)
+    raw = mean_diff(y_t, y_c, alpha)
+    r["rel_lift"] = r["diff"] / raw["mean_control"] if raw["mean_control"] else float("nan")
+    r["theta"] = [float(v) for v in theta]
+    r["se_unadjusted"] = raw["se"]
+    r["variance_reduction"] = float(1 - (r["se"] / raw["se"]) ** 2) if raw["se"] > 0 else 0.0
+    return r
 
 
 def mde(sigma: float, n_per_arm: int, alpha: float = 0.05, power: float = 0.8) -> float:

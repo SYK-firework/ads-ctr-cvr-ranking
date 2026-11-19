@@ -12,6 +12,10 @@ Reported:
   - primary metric: conversion value per user (Welch CI, p-value)
   - secondary: conversions per user, spend per user (guardrail), ROI via delta method
   - power: MDE at this sample size and users needed for the observed lift
+  - CUPED: the same tests with variance reduction from covariates the treatment cannot
+    change: (a) each user's activity in the validation window (pre-experiment period),
+    (b) (a) plus the number of impressions the user is offered in the test window, which the
+    bidding policy does not change (it decides which of them to win, not how many arrive)
   - A/A: false-positive rate over many random splits of the control policy
   - peeking: false-positive rate when an A/A test is checked at many interim looks and
     stopped at the first p < 0.05
@@ -29,7 +33,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from adsrank.abtest import assign, mde, mean_diff, ratio_diff, sample_size, srm_check  # noqa: E402
+from adsrank.abtest import assign, cuped, mde, mean_diff, ratio_diff, sample_size, srm_check  # noqa: E402
 from adsrank.bidding import alpha_for_spend  # noqa: E402
 
 
@@ -51,6 +55,23 @@ def outcomes(d: pd.DataFrame, ev: np.ndarray, alpha: float) -> pd.DataFrame:
 
 def per_user(o: pd.DataFrame) -> pd.DataFrame:
     return o.groupby("uid")[["spend", "conv", "value"]].sum()
+
+
+def pre_period(v: pd.DataFrame, alpha: float, mean_cvr: float) -> pd.DataFrame:
+    """Per-user covariates from the validation window, which ends before the test window starts."""
+    won = per_user(outcomes(v, expected_value(v, "ctr_only", mean_cvr), alpha)).add_prefix("pre_won_")
+    seen = v.groupby("uid").agg(pre_imps=("cost", "size"), pre_clicks=("click", "sum"),
+                                pre_convs=("attribution", "sum"))
+    return seen.join(won)
+
+
+def covariates(users: pd.Index, pre: pd.DataFrame, window: pd.DataFrame, exposure: bool) -> np.ndarray:
+    x = pre.reindex(users).fillna(0.0)
+    x["has_pre"] = users.isin(pre.index).astype(float)
+    if exposure:
+        n = window.groupby("uid").size().reindex(users).fillna(0).to_numpy(np.float64)
+        x["imps"], x["log_imps"] = n, np.log1p(n)
+    return x.to_numpy(np.float64)
 
 
 def main() -> None:
@@ -92,16 +113,31 @@ def main() -> None:
                        "mde_abs": mde(sigma, n), "mde_rel": mde(sigma, n) / report["value_per_user"]["mean_control"],
                        "users_per_arm_for_observed_lift": sample_size(sigma, abs(obs)) if obs else None}
 
+    # ---- CUPED: same comparison, covariates the treatment cannot change
+    pre = pre_period(v, alphas["ctr_only"], mean_cvr)
+    report["cuped"] = {"pre_period_user_share": float(np.isin(np.union1d(u_t.index, u_c.index), pre.index).mean())}
+    for name, expo in (("pre_period", False), ("pre_period_plus_exposure", True)):
+        xt, xc = covariates(u_t.index, pre, d, expo), covariates(u_c.index, pre, d, expo)
+        res = {m: cuped(u_t[col], xt, u_c[col], xc)
+               for m, col in (("value_per_user", "value"), ("conversions_per_user", "conv"))}
+        vr = res["value_per_user"]["variance_reduction"]
+        res["mde_rel_value_per_user"] = mde(sigma * np.sqrt(1 - vr), n) / report["value_per_user"]["mean_control"]
+        res["users_per_arm_for_observed_lift"] = sample_size(sigma * np.sqrt(1 - vr), abs(obs)) if obs else None
+        report["cuped"][name] = res
+
     # ---- A/A: control policy on both arms, many random salts
     oc = outcomes(d, expected_value(d, "ctr_only", mean_cvr), alphas["ctr_only"])
     users = per_user(oc)
     uids = users.index.to_numpy()
-    pvals = []
+    x_all = covariates(users.index, pre, d, exposure=True)
+    pvals, pvals_cuped = [], []
     for i in range(a.aa_runs):
         g = assign(uids, salt=f"aa-{i}")
         pvals.append(mean_diff(users.value[g == 1], users.value[g == 0])["p_value"])
-    pvals = np.array(pvals)
-    report["aa"] = {"runs": a.aa_runs, "false_positive_rate": float((pvals < 0.05).mean())}
+        pvals_cuped.append(cuped(users.value[g == 1], x_all[g == 1], users.value[g == 0], x_all[g == 0])["p_value"])
+    pvals, pvals_cuped = np.array(pvals), np.array(pvals_cuped)
+    report["aa"] = {"runs": a.aa_runs, "false_positive_rate": float((pvals < 0.05).mean()),
+                    "false_positive_rate_cuped": float((pvals_cuped < 0.05).mean())}
 
     # ---- peeking: A/A checked at `looks` interim points, stop at first p < 0.05
     ts_edges = np.quantile(oc.ts, np.linspace(0, 1, a.looks + 1)[1:])
@@ -150,7 +186,16 @@ def main() -> None:
     pw = report["power"]
     print(f"\n== Power ==\nusers per arm {pw['users_per_arm']:,} | MDE {pw['mde_rel']:.1%} of control "
           f"| users per arm needed for the observed lift: {pw['users_per_arm_for_observed_lift']:,}")
-    print(f"\n== A/A ({a.aa_runs} splits) ==\nfalse positive rate at p < 0.05: {report['aa']['false_positive_rate']:.1%}")
+    cu = report["cuped"]
+    print(f"\n== CUPED (test users seen in the pre-period: {cu['pre_period_user_share']:.1%}) ==")
+    for name in ("pre_period", "pre_period_plus_exposure"):
+        r = cu[name]["value_per_user"]
+        base = report["value_per_user"]["mean_control"]
+        print(f"{name:26s} value/user lift {r['rel_lift']:+6.1%}  95% CI [{r['ci_low'] / base:+6.1%}, "
+              f"{r['ci_high'] / base:+6.1%}]  variance -{r['variance_reduction']:.1%}  "
+              f"MDE {cu[name]['mde_rel_value_per_user']:.1%}  users/arm needed {cu[name]['users_per_arm_for_observed_lift']:,}")
+    print(f"\n== A/A ({a.aa_runs} splits) ==\nfalse positive rate at p < 0.05: {report['aa']['false_positive_rate']:.1%}"
+          f" (with CUPED: {report['aa']['false_positive_rate_cuped']:.1%})")
     print(f"\n== Peeking ({a.looks} interim looks, stop at first p < 0.05) ==\n"
           f"false positive rate: {report['peeking']['false_positive_rate']:.1%}")
     print(f"\nsaved {out}/abtest.json, abtest_lift.png")

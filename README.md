@@ -50,7 +50,7 @@ advertiser ROI and platform revenue. This repository builds and evaluates each p
 | CVR sample selection bias | ESMM vs click-only CVR loss (controlled comparison) | done |
 | Probability accuracy for pricing | Platt / Isotonic, ECE, per-campaign calibration, downsampling correction | done |
 | Automated bidding, advertiser ROI | Second-price replay, value-based bids, ROI-target auto-bidding, adaptive budget pacing | done |
-| Online experimentation | User-level A/B test, SRM, delta method, power, A/A, peeking | done |
+| Online experimentation | User-level A/B test, SRM, delta method, CUPED, power, A/A, peeking | done |
 | Deep CTR models | DeepFM / DCN-v2 on the same split as XGBoost | done |
 | Delayed conversions | Replayed training cutoff; naive vs waiting window vs DFM variants vs rescaling | done |
 | Low-latency serving | FastAPI scorer, skew check, model and HTTP latency, open-loop load test, KServe | done |
@@ -435,7 +435,7 @@ src/adsrank/
   run_calibration.py    calibration study on Criteo Attribution
   bidding.py            second-price replay, budget / ROI-target auto-bidding, PI pacing
   run_bidding.py        bidding policy comparison
-  abtest.py             hash assignment, SRM, Welch / delta-method tests, MDE and sample size
+  abtest.py             hash assignment, SRM, Welch / delta-method tests, CUPED, MDE and sample size
   run_abtest.py         A/B, A/A and peeking experiments on bidding policies
   deepctr.py            DeepFM and DCN-v2 in PyTorch, shared binary trainer
   train_deepctr.py      deep CTR / CVR training and evaluation
@@ -475,7 +475,7 @@ repository; the scripts download them from the original source.
 - Benchmark DeepFM / DCN-v2 on Criteo DAC against published results (loader and XGBoost baseline
   are in `prep.py` / `train_gbdt.py`; the original download link is retired, candidate mirror:
   https://huggingface.co/datasets/reczoo/Criteo_x4).
-- CUPED variance reduction for the A/B test, and a traffic-shaped spend plan for the pacer.
+- A traffic-shaped spend plan for the pacer.
 
 ## References
 
