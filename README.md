@@ -30,6 +30,7 @@ On 2M impressions with a held-out, later-in-time test window:
   ignored the early-stopping iteration) before deployment.
 - **In a user-level A/B test the value-based policy lifts ROI by 48%** (95% CI +35% to +61%);
   an A/A check confirms the test's 5% false-positive rate, and peeking 20 times inflates it to 24%.
+  CUPED removes only 2% of variance here, because 93% of test users have no pre-period history.
 
 ## Why this project
 
@@ -271,11 +272,47 @@ Findings:
   called out and either accepted or the treatment re-tuned to budget parity before shipping.
 - **Conversion value per user is a noisy metric** (MDE 19% with 160K users per arm): most users
   never convert. Detecting a realistic 5% lift would need roughly 2.4M users per arm, which is
-  why ads experiments rely on large traffic and variance reduction (e.g. CUPED with
-  pre-period covariates).
+  why ads experiments rely on large traffic and variance reduction (CUPED, tried below).
 - The A/A rate (6.0%) is consistent with the nominal 5% given 200 runs, so the test is
   calibrated. **Peeking 20 times inflates false positives to 24%**, about 5x; interim looks need
   a sequential method (alpha spending / always-valid p-values) or a fixed horizon.
+
+#### CUPED variance reduction
+
+`run_abtest` repeats the primary comparison with CUPED (Deng et al., 2013): each user's value is
+adjusted by covariates the treatment cannot change, `y_adj = y - (x - mean(x)) * theta`, with
+theta fitted by least squares on both arms pooled. Two covariate sets were tried:
+
+- **pre_period**: the user's impressions, clicks, conversions and won value under the control
+  policy in the validation window, which ends before the test window starts;
+- **pre_period_plus_exposure**: the same, plus the number of impressions the user is offered in
+  the test window. Bidding decides which impressions to win, not how many arrive, so this is
+  also unaffected by the treatment.
+
+| Value per user | Lift | 95% CI | Variance removed | MDE | Users per arm for the observed lift |
+|---|---|---|---|---|---|
+| No adjustment | +53.3% | [+39.8%, +66.9%] | – | 19.4% | 21,522 |
+| CUPED, pre_period | +52.1% | [+38.6%, +65.6%] | 1.2% | 19.3% | 21,257 |
+| CUPED, pre_period_plus_exposure | +51.3% | [+37.9%, +64.8%] | 2.0% | 19.2% | 21,094 |
+
+| A/A false-positive rate (200 splits) | Result |
+|---|---|
+| Without CUPED | 6.0% |
+| With CUPED (pre_period_plus_exposure) | 4.5% |
+
+Findings:
+
+- **CUPED barely helps here (1-2% variance removed)**, and the reason is the data, not the
+  method. Only 7.4% of test-window users appear in the 3-day pre-period, and value per user is
+  almost all zeros: a covariate cannot predict a conversion that is rare and mostly comes from
+  users with no history.
+- The adjustment is safe: the lift estimate moves by about 2 points, well inside the CI, and
+  the A/A false-positive rate stays near 5%. Unit tests on simulated data with a correlated
+  pre-period metric show the expected behaviour (about 50% variance removed, unbiased, 95% CI
+  coverage).
+- CUPED pays off when the same users return and the pre-period metric tracks the experiment
+  metric, as with logged-in shoppers on a retail site. On this dataset a longer pre-period (the
+  training window) or a model-predicted covariate (CUPAC) would be the next things to try.
 
 ### Deep CTR models: DeepFM and DCN-v2
 
