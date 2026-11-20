@@ -1,0 +1,9 @@
+{
+ "model": "dcnv2",
+ "data": "data/criteo_2000000.parquet",
+ "test_auc": 0.7843086265903462,
+ "test_logloss": 0.461005007062893,
+ "test_ne": 0.8147272251435663,
+ "test_calibration": 1.0027934239030596,
+ "train_seconds": 1835.5376811027527
+}

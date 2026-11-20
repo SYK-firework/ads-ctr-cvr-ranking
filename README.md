@@ -31,6 +31,8 @@ On 2M impressions with a held-out, later-in-time test window:
 - **In a user-level A/B test the value-based policy lifts ROI by 48%** (95% CI +35% to +61%);
   an A/A check confirms the test's 5% false-positive rate, and peeking 20 times inflates it to 24%.
   CUPED removes only 2% of variance here, because 93% of test users have no pre-period history.
+- **On Criteo DAC (pure CTR), DCN-v2 beats XGBoost by +0.0047 AUC** (0.7843 vs 0.7796 on 2M rows),
+  the reverse of Attribution, where XGBoost matched the deep models at a fraction of the cost.
 
 ## Why this project
 
@@ -53,6 +55,7 @@ advertiser ROI and platform revenue. This repository builds and evaluates each p
 | Automated bidding, advertiser ROI | Second-price replay, value-based bids, ROI-target auto-bidding, adaptive budget pacing | done |
 | Online experimentation | User-level A/B test, SRM, delta method, CUPED, power, A/A, peeking | done |
 | Deep CTR models | DeepFM / DCN-v2 on the same split as XGBoost | done |
+| Public CTR benchmark | XGBoost / DeepFM / DCN-v2 on Criteo DAC (Criteo_x4) vs published results | done |
 | Delayed conversions | Replayed training cutoff; naive vs waiting window vs DFM variants vs rescaling | done |
 | Low-latency serving | FastAPI scorer, skew check, model and HTTP latency, open-loop load test, KServe | done |
 
@@ -336,6 +339,39 @@ as the XGBoost baseline (results are in the main table above).
 - Practical call on this data: XGBoost for CVR / CTCVR, DCN-v2 only if a +0.001 CTR AUC gain is
   worth the training and serving cost, which would have to be confirmed online.
 
+### Criteo DAC benchmark (pure CTR)
+
+The Display Advertising Challenge (DAC) data is the standard public CTR benchmark: 13 numeric
+and 26 anonymized categorical features, one click label. The original download link is
+retired, so this run uses the `Criteo_x4` mirror (Zhu et al., 2021), whose `train.csv` is
+already shuffled. The first 2,000,000 rows were split 80/10/10 by order (a random split here,
+unlike the time-based split used on Attribution); categories seen fewer than 10 times in the
+train part map to an out-of-vocabulary id, and numeric features are log-transformed.
+
+| Model | Test AUC | LogLoss | NE | Calibration (pred / actual) | Training time (2-CPU laptop) |
+|---|---|---|---|---|---|
+| XGBoost | 0.7796 | 0.4642 | 0.8204 | 1.003 | 478 s (884 rounds) |
+| DeepFM | 0.7786 | 0.4658 | 0.8233 | 1.045 | **317 s** |
+| DCN-v2 | **0.7843** | **0.4610** | **0.8147** | **1.003** | 1,836 s |
+
+Raw numbers: [results/dac_xgboost.json](results/dac_xgboost.json),
+[results/dac_deepfm.json](results/dac_deepfm.json), [results/dac_dcnv2.json](results/dac_dcnv2.json).
+
+Findings:
+
+- **DCN-v2 wins on DAC**: +0.0047 AUC over XGBoost and +0.0057 over DeepFM, with lower LogLoss.
+  At this scale a 0.001 AUC gain is usually treated as meaningful for CTR models. Its explicit
+  feature crosses pay off on 26 high-cardinality categorical fields, while on Attribution
+  (fewer, coarser features) XGBoost matched the deep models. The best model depends on the data.
+- **The gain costs 3.8x XGBoost's training time** (31 minutes vs 8 on CPU). On GPUs and with
+  daily retraining that trade is usually worth it; on a CPU budget XGBoost is the strong default.
+- **DeepFM over-predicts by 4.5%**; XGBoost and DCN-v2 are calibrated within 0.3%. DeepFM would
+  need the calibration step (stage 3) before its scores could set bids.
+- **Gap to published results**: on the full `Criteo_x4` data (about 45M rows) these models reach
+  about 0.81 AUC (Zhu et al., 2021). This run uses 2M rows (4.4% of the data), default
+  hyperparameters and CPU only, so ~0.03 lower AUC is expected; embedding models gain the most
+  from more data.
+
 ### Delayed feedback
 
 `make delayed` replays the training cutoff at the end of the training window: conversions that
@@ -441,7 +477,9 @@ uv venv && source .venv/bin/activate
 make install              # package + mlflow + datasets + pytest
 uv pip install torch --index-url https://download.pytorch.org/whl/cpu   # for ESMM (CPU build)
 make test                 # smoke tests on synthetic Criteo-format data
-make data ROWS=2000000    # stream the first 2M rows of Criteo DAC into data/
+# Criteo DAC: the original link is retired; download Criteo_x4.zip from
+# https://huggingface.co/datasets/reczoo/Criteo_x4 and take the first 2M rows of train.csv:
+#   unzip -p data/Criteo_x4.zip train.csv | head -n 2000001 > data/train_2000000.csv
 make data-attribution ATTR_ROWS=2000000   # stream 2M rows of Criteo Attribution from Hugging Face
 make train-attribution ATTR_ROWS=2000000  # CTR + CVR XGBoost baseline -> results/attribution_xgb.json
 make train-esmm ATTR_ROWS=2000000         # ESMM vs click-only CVR loss -> results/attribution_*.json
@@ -453,8 +491,9 @@ make delayed ATTR_ROWS=2000000            # delayed-feedback CVR study
 make export bench ATTR_ROWS=2000000       # export serving models (skew check) + model latency
 make serve                                # local scoring server on :8080 (separate terminal)
 make loadtest                             # open-loop load test, p50 / p90 / p99
-make prep ROWS=2000000
+python -m adsrank.prep --input data/train_2000000.csv --out data/criteo_2000000.parquet
 make train-gbdt ROWS=2000000 MLFLOW=http://localhost:5000   # MLFLOW is optional
+make dac-deep ROWS=2000000                                  # DeepFM and DCN-v2 on DAC
 ```
 
 ## Layout
@@ -493,6 +532,8 @@ docs/roadmap.md   stages and datasets
 
 - **Time-based split.** Criteo rows are ordered by time; random splits leak future
   information and overstate AUC. The vocabulary is built on the train window only.
+  (Exception: the `Criteo_x4` DAC mirror is pre-shuffled, so the DAC benchmark is a random split,
+  which matches how published DAC results are reported.)
 - **NE (Normalized Entropy)** is reported alongside LogLoss so results are comparable across
   datasets with different base CTRs.
 - **Calibration** is tracked for every model because ranking by `bid x pCTR` and pricing
@@ -506,12 +547,11 @@ repository; the scripts download them from the original source.
 - Criteo Attribution Modeling for Bidding: https://huggingface.co/datasets/criteo/criteo-attribution-dataset
   (Diemert et al., 2017, "Attribution Modeling Increases Efficiency of Bidding in Display Advertising")
 - Criteo Display Advertising Challenge: https://www.kaggle.com/c/criteo-display-ad-challenge
+  (mirror used here: https://huggingface.co/datasets/reczoo/Criteo_x4)
 
 ## Future work
 
-- Benchmark DeepFM / DCN-v2 on Criteo DAC against published results (loader and XGBoost baseline
-  are in `prep.py` / `train_gbdt.py`; the original download link is retired, candidate mirror:
-  https://huggingface.co/datasets/reczoo/Criteo_x4).
+- Train the DAC models on the full 45M rows (GPU) to close the gap to published AUC.
 - A traffic-shaped spend plan for the pacer.
 
 ## References
@@ -529,6 +569,7 @@ repository; the scripts download them from the original source.
 
 - Guo, H., Tang, R., Ye, Y., Li, Z., & He, X. (2017). DeepFM: A factorization-machine based neural network for CTR prediction. In *Proceedings of the 26th International Joint Conference on Artificial Intelligence* (pp. 1725–1731). IJCAI. https://doi.org/10.24963/ijcai.2017/239
 - Wang, R., Shivanna, R., Cheng, D., Jain, S., Lin, D., Hong, L., & Chi, E. (2021). DCN V2: Improved deep & cross network and practical lessons for web-scale learning to rank systems. In *Proceedings of the Web Conference 2021* (pp. 1785–1797). ACM. https://doi.org/10.1145/3442381.3450078
+- Zhu, J., Liu, J., Yang, S., Zhang, Q., & He, X. (2021). Open benchmarking for click-through rate prediction. In *Proceedings of the 30th ACM International Conference on Information & Knowledge Management* (pp. 2759–2769). ACM. https://doi.org/10.1145/3459637.3482486
 - Chapelle, O. (2014). Modeling delayed feedback in display advertising. In *Proceedings of the 20th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining* (pp. 1097–1105). ACM. https://doi.org/10.1145/2623330.2623634
 
 ### Calibration

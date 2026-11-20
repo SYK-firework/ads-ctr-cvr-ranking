@@ -1,0 +1,10 @@
+{
+ "model": "xgboost",
+ "data": "data/criteo_2000000.parquet",
+ "test_auc": 0.77959075221989,
+ "test_logloss": 0.4642364175358046,
+ "test_ne": 0.8204380483397588,
+ "test_calibration": 1.0025980700153305,
+ "train_seconds": 477.9056739807129,
+ "best_iteration": 884.0
+}

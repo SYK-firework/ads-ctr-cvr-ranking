@@ -1,0 +1,9 @@
+{
+ "model": "deepfm",
+ "data": "data/criteo_2000000.parquet",
+ "test_auc": 0.7786210001023057,
+ "test_logloss": 0.4658488412661398,
+ "test_ne": 0.8232876605813714,
+ "test_calibration": 1.0452453848081735,
+ "train_seconds": 316.88048362731934
+}
