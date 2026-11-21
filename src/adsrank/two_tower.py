@@ -18,6 +18,13 @@ Which cat features describe the ad, not the request? Criteo does not say, and a 
 measures it: the share of rows where the feature equals its campaign's most common value.
 Features above `purity` go to the ad tower (as the campaign's modal value), the rest to the query.
 
+Per-feature purity is not enough: features that each look request-side can still identify the
+campaign together. `identifiability` measures the combination: the share of train clicks whose
+campaign is the most common campaign among clicks with the same query-feature values. The first
+run on Criteo used every cat feature below the purity cut and reached recall@10 = 0.998, which
+is that leak, not retrieval skill; `main` therefore compares query-feature sets, from
+request-only (hour, user recency) upwards, each reported with its identifiability.
+
 Evaluation on test-window clicks: recall@K = share of clicks whose campaign is in the top K,
 against two baselines: the K most clicked campaigns of the train window (popularity), and a
 lookup of the most clicked campaigns among train clicks with exactly the same query features
@@ -61,25 +68,39 @@ def popularity_scores(train_items: np.ndarray, n_items: int, n_queries: int) -> 
     return np.broadcast_to(pop, (n_queries, n_items))
 
 
-def build(feats: pd.DataFrame, raw: pd.DataFrame, purity: float = 0.95):
-    """Clicked rows only; campaign code 0 (OOV in train) cannot be retrieved and is dropped."""
+def identifiability(d: pd.DataFrame, cols) -> float:
+    """Share of rows whose campaign is the modal campaign of their `cols` value combination
+    (in-sample). 1.0 = the query features alone name the campaign; global top-1 share if no cols."""
+    camp = d["campaign"].cat.codes.to_numpy()
+    if not cols:
+        return float(np.bincount(camp).max() / len(camp))
+    key = pd.MultiIndex.from_frame(pd.DataFrame({c: d[c].cat.codes.to_numpy() if hasattr(d[c], "cat")
+                                                 else d[c].to_numpy() for c in cols}))
+    g = pd.DataFrame({"k": pd.factorize(key)[0], "c": camp}).groupby(["k", "c"]).size()
+    return float(g.groupby(level=0).max().sum() / len(camp))
+
+
+def build(feats: pd.DataFrame, raw: pd.DataFrame, purity: float = 0.95, query_cats=None):
+    """Clicked rows only; campaign code 0 (OOV in train) cannot be retrieved and is dropped.
+    `query_cats` overrides which cat features go to the query tower (default: all below purity)."""
     clicked = feats[(feats.click == 1) & (feats.campaign.cat.codes > 0)]
     others = [c for c in CATS if c != "campaign"]
     tr_raw = raw.loc[clicked.index[clicked.split == "train"]]
     purity_by_feature = ad_side_features(tr_raw, others)
     ad_side = [c for c in others if purity_by_feature[c] >= purity]
-    query_side = [c for c in others if c not in ad_side]
+    query_side = [c for c in others if c not in ad_side] if query_cats is None else list(query_cats)
     return clicked, query_side, ad_side, purity_by_feature
 
 
 def train_eval(feats, raw, epochs: int = 3, batch: int = 2048, dim: int = 32, lr: float = 2e-3,
-               temperature: float = 0.05, threads: int = 4, max_eval: int = 50_000, log=print) -> dict:
+               temperature: float = 0.05, threads: int = 4, max_eval: int = 50_000, query_cats=None,
+               log=print) -> dict:
     import torch
     from torch import nn
 
     torch.manual_seed(0)
     torch.set_num_threads(threads)
-    clicked, q_cats, a_cats, purity_by_feature = build(feats, raw)
+    clicked, q_cats, a_cats, purity_by_feature = build(feats, raw, query_cats=query_cats)
     log(f"ad-side features (purity >= 0.95): {a_cats or 'none'}; query features: {q_cats}")
     tr, te = clicked[clicked.split == "train"], clicked[clicked.split == "test"]
     n_items = len(feats.campaign.cat.categories)
@@ -180,6 +201,7 @@ def train_eval(feats, raw, epochs: int = 3, batch: int = 2048, dim: int = 32, lr
         res["context_popularity"] = recall_at_k(Sc, truth_i)
         res["context_seen_share"] = float(np.mean([k in lookup for k in te_key]))
     return res | {
+        "identifiability": identifiability(tr, q_cats + ["hour"]),
         "n_campaigns": int(n_items - 1), "train_clicks": int(n), "test_clicks_evaluated": int(len(Q)),
         "query_features": q_cats + ["hour"] + CTX_NUMS, "ad_features": ["campaign"] + a_cats,
         "purity_by_feature": purity_by_feature, "dim": dim, "epochs": epochs,
@@ -196,14 +218,25 @@ def main():
     a = p.parse_args()
     raw = load(a.data)
     feats = build_features(raw, time_split(raw))
-    r = train_eval(feats, raw, epochs=a.epochs, threads=a.threads)
+    _, default_q, _, purity = build(feats, raw)
+    low = [c for c in default_q if purity[c] < 0.6]
+    configs = {"request_only": [], "low_purity_cats": low, "all_non_ad_cats": default_q}
+    runs = {}
+    for name, q in configs.items():
+        print(f"\n== query features: {name} = hour, user recency + {q or 'no cat features'}")
+        runs[name] = train_eval(feats, raw, epochs=a.epochs, threads=a.threads, query_cats=q)
     Path(a.out).parent.mkdir(exist_ok=True)
-    Path(a.out).write_text(json.dumps(r, indent=1))
-    print(f"\n{'method':20s} " + " ".join(f"{k:>10s}" for k in [f'recall@{k}' for k in KS] + ['mrr']))
-    for m in ("popularity", "context_popularity", "two_tower"):
-        if m in r:
-            print(f"{m:20s} " + " ".join(f"{r[m][k]:>10.4f}" for k in [f'recall@{k}' for k in KS] + ['mrr']))
-    print(json.dumps({k: v for k, v in r.items() if k not in ("two_tower", "popularity", "context_popularity")}))
+    Path(a.out).write_text(json.dumps(runs, indent=1))
+    cols = [f"recall@{k}" for k in KS] + ["mrr"]
+    print(f"\n{'query features':18s} {'method':20s} {'identif.':>8s} " + " ".join(f"{k:>10s}" for k in cols))
+    for name, r in runs.items():
+        for m in ("popularity", "context_popularity", "two_tower"):
+            if m in r:
+                print(f"{name:18s} {m:20s} {r['identifiability']:>8.3f} "
+                      + " ".join(f"{r[m][k]:>10.4f}" for k in cols))
+    for name, r in runs.items():
+        print(name, json.dumps({k: v for k, v in r.items() if k not in ("two_tower", "popularity", "context_popularity", "purity_by_feature")}))
+    print("purity", json.dumps(purity))
     print(f"saved {a.out}")
 
 
