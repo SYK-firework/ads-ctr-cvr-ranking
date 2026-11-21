@@ -32,3 +32,19 @@ jobs:
           python3 scripts/extract_rules.py k8s/monitoring.yaml tests/prometheus/rules.yml
           docker run --rm -v "$PWD/tests/prometheus:/r" -w /r --entrypoint promtool prom/prometheus check rules rules.yml
           docker run --rm -v "$PWD/tests/prometheus:/r" -w /r --entrypoint promtool prom/prometheus test rules rules_test.yml
+
+  airflow-dag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install Airflow (standalone, SQLite) and the package
+        run: |
+          pip install "apache-airflow" -e ".[dev]"
+          airflow version
+      - name: DAG imports and has the expected structure
+        env: { AIRFLOW__CORE__LOAD_EXAMPLES: "false" }
+        run: |
+          airflow db migrate >/dev/null
+          pytest -q tests/test_pipeline_decision.py -rs
