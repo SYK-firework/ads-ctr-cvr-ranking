@@ -1,0 +1,23 @@
+{
+ "reference_rows": 199997,
+ "current_rows": 400003,
+ "overall_psi_p_ctr": 0.0007161991629885773,
+ "overall_psi_p_cvr": 0.00031396288124815994,
+ "worst_daily_score_psi": 0.0007161991629885773,
+ "status": "stable",
+ "thresholds": {
+  "watch": 0.1,
+  "act": 0.25
+ },
+ "daily": [
+  {
+   "day": 0,
+   "n": 400003,
+   "psi_p_ctr": 0.0007161991629885773,
+   "psi_p_cvr": 0.00031396288124815994,
+   "psi_campaign": 0.017342904321360826,
+   "calib_p_ctr": 0.9759942745619521,
+   "calib_p_cvr": 0.9844412085547906
+  }
+ ]
+}

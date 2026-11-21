@@ -1,0 +1,4 @@
+ day      n  psi_p_ctr  psi_p_cvr  psi_campaign  calib_p_ctr  calib_p_cvr
+   0 400003     0.0007     0.0003        0.0173        0.976       0.9844
+
+worst daily score PSI 0.0007 -> stable  (saved results/drift.json)
