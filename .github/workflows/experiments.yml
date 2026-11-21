@@ -189,7 +189,7 @@ jobs:
             --namespace kserve --set kserve.controller.deploymentMode=Standard \
             --set kserve.controller.gateway.disableIngressCreation=true --wait --timeout 10m
       - run: make image deploy IMAGE=adsrank-serving:v1
-      - name: Run the DAG (no force: the drift report decides)
+      - name: "Run the DAG (no force, the drift report decides)"
         run: |
           airflow db migrate > /dev/null
           airflow version
