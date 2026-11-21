@@ -1,0 +1,141 @@
+# Re-run every experiment from scratch and compare with the committed results (results/*.json).
+# Manual trigger: `gh workflow run reproduce`. The comparison report is in the `compare` job's
+# log and summary; nothing is committed. Timing values differ by machine and are not judged.
+name: reproduce
+
+on:
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: Criteo Attribution rows (must match the committed results)
+        default: "2000000"
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  ROWS: ${{ inputs.rows }}
+
+jobs:
+  attribution:
+    name: xgb + calibration + bidding + A/B + delayed + drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13", cache: pip }
+      - run: pip install -e ".[data,dev]"
+      - uses: actions/cache@v4
+        id: data
+        with: { path: "data/attribution_${{ inputs.rows }}.parquet", key: "attribution-${{ inputs.rows }}" }
+      - if: steps.data.outputs.cache-hit != 'true'
+        run: make data-attribution ATTR_ROWS=$ROWS
+      - run: rm -f results/*.json && mkdir -p results
+      - run: make train-attribution ATTR_ROWS=$ROWS
+      - run: make calibrate ATTR_ROWS=$ROWS
+      - run: make bid
+      - run: make abtest
+      - run: make delayed ATTR_ROWS=$ROWS
+      - run: make drift
+      - run: for f in results/*.json; do echo "=== $f"; cat "$f"; echo; done
+      - uses: actions/upload-artifact@v4
+        with: { name: r-attribution, path: results/*.json }
+
+  esmm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13", cache: pip }
+      - run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[data,dev]"
+      - uses: actions/cache@v4
+        id: data
+        with: { path: "data/attribution_${{ inputs.rows }}.parquet", key: "attribution-${{ inputs.rows }}" }
+      - if: steps.data.outputs.cache-hit != 'true'
+        run: make data-attribution ATTR_ROWS=$ROWS
+      - run: rm -f results/*.json && make train-esmm ATTR_ROWS=$ROWS
+      - run: for f in results/*.json; do echo "=== $f"; cat "$f"; echo; done
+      - uses: actions/upload-artifact@v4
+        with: { name: r-esmm, path: results/*.json }
+
+  deepctr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13", cache: pip }
+      - run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[data,dev]"
+      - uses: actions/cache@v4
+        id: data
+        with: { path: "data/attribution_${{ inputs.rows }}.parquet", key: "attribution-${{ inputs.rows }}" }
+      - if: steps.data.outputs.cache-hit != 'true'
+        run: make data-attribution ATTR_ROWS=$ROWS
+      - run: rm -f results/*.json && make train-deepctr ATTR_ROWS=$ROWS
+      - run: for f in results/*.json; do echo "=== $f"; cat "$f"; echo; done
+      - uses: actions/upload-artifact@v4
+        with: { name: r-deepctr, path: results/*.json }
+
+  serving:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13", cache: pip }
+      - run: pip install -e ".[data,serving,dev]"
+      - uses: actions/cache@v4
+        id: data
+        with: { path: "data/attribution_${{ inputs.rows }}.parquet", key: "attribution-${{ inputs.rows }}" }
+      - if: steps.data.outputs.cache-hit != 'true'
+        run: make data-attribution ATTR_ROWS=$ROWS
+      - run: rm -f results/*.json && make export ATTR_ROWS=$ROWS && make bench
+      - run: for f in results/*.json; do echo "=== $f"; cat "$f"; echo; done
+      - uses: actions/upload-artifact@v4
+        with: { name: r-serving, path: results/*.json }
+
+  dac:
+    name: Criteo DAC (first 2M rows of Criteo_x4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13", cache: pip }
+      - run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[data,dev]"
+      - name: Download Criteo_x4 and take the first 2M rows of train.csv (README Quickstart)
+        run: |
+          mkdir -p data
+          curl -sSL -o data/Criteo_x4.zip https://huggingface.co/datasets/reczoo/Criteo_x4/resolve/main/Criteo_x4.zip
+          ls -lh data/Criteo_x4.zip
+          set +o pipefail
+          unzip -p data/Criteo_x4.zip train.csv | head -n 2000001 > data/train_2000000.csv
+          set -o pipefail
+          rm data/Criteo_x4.zip
+          wc -l data/train_2000000.csv
+      - run: rm -f results/*.json && python -m adsrank.prep --input data/train_2000000.csv --out data/criteo_2000000.parquet
+      - run: make train-gbdt ROWS=2000000
+      - run: make dac-deep ROWS=2000000
+      - run: for f in results/*.json; do echo "=== $f"; cat "$f"; echo; done
+      - uses: actions/upload-artifact@v4
+        with: { name: r-dac, path: results/*.json }
+
+  compare:
+    needs: [attribution, esmm, deepctr, serving, dac]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { pattern: r-*, path: reproduced, merge-multiple: true }
+      - run: ls reproduced
+      - run: python3 scripts/compare_results.py results reproduced
