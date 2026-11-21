@@ -59,16 +59,24 @@ def drift_level(value: float, watch: float = 0.1, act: float = 0.25) -> str:
 
 
 def daily_drift(ref, cur, score_cols=("p_ctr", "p_cvr"),
-                label_cols=None, cat_cols=("campaign",), day_seconds: int = 86400):
+                label_cols=None, cat_cols=("campaign",), day_seconds: int = 86400, slices: int | None = None):
     """One row per day of `cur`: score PSI and categorical PSI against `ref`, plus the
     calibration ratio when labels are given. `label_cols` maps score column -> label column;
-    CVR is measured on clicked rows only (post-click conversion)."""
+    CVR is measured on clicked rows only (post-click conversion).
+    `slices` instead cuts `cur` into that many equal-time windows (for windows shorter than a day);
+    the `day` column is then the slice index and `hours` its start, in hours from the window start."""
     import pandas as pd
     label_cols = label_cols or {}
-    day = (cur["timestamp"] - cur["timestamp"].min()) // day_seconds
+    t = cur["timestamp"] - cur["timestamp"].min()
+    if slices:
+        width = (t.max() + 1) / slices
+        day = (t // width).astype(int)
+    else:
+        width = day_seconds
+        day = t // day_seconds
     rows = []
     for d, g in cur.groupby(day):
-        row = {"day": int(d), "n": len(g)}
+        row = {"day": int(d), "hours": round(float(d * width / 3600), 2), "n": len(g)}
         for s in score_cols:
             row[f"psi_{s}"] = psi(ref[s], g[s])
         for c in cat_cols:

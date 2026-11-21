@@ -103,3 +103,10 @@ def test_canary_path_imports_without_pandas():
             "builtins.__import__ = imp\n"
             "import adsrank.canary\n")
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_slices_split_a_short_window():
+    cur = pd.DataFrame({"timestamp": np.arange(0, 36000, 10), "p_ctr": np.linspace(0.01, 0.1, 3600),
+                        "p_cvr": 0.1, "campaign": 1})
+    t = daily_drift(cur, cur, score_cols=("p_ctr",), slices=4)
+    assert list(t.day) == [0, 1, 2, 3] and t.n.sum() == 3600 and t.hours.iloc[1] == 2.5

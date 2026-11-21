@@ -1,4 +1,4 @@
-"""Daily prediction-drift report on the test window, with the validation window as reference.
+"""Prediction-drift report by time window (daily, or equal slices) on the test window, with the validation window as reference.
 
 Inputs are the prediction files written by `make calibrate`:
   data/preds_valid.parquet  reference (the window the calibrators were fitted on)
@@ -26,16 +26,21 @@ def main():
     a.add_argument("--out", default="results")
     a.add_argument("--watch", type=float, default=0.1)
     a.add_argument("--act", type=float, default=0.25)
+    a.add_argument("--slices", type=int, default=8,
+                   help="equal-time windows of the monitored period (0 = one per day); a 2M-row "
+                        "subset covers only a few days, so its test window is shorter than a day")
     a = a.parse_args()
 
     ref, cur = pd.read_parquet(a.ref), pd.read_parquet(a.cur)
-    table = daily_drift(ref, cur, label_cols={"p_ctr": "click", "p_cvr": "attribution"})
+    table = daily_drift(ref, cur, label_cols={"p_ctr": "click", "p_cvr": "attribution"},
+                        slices=a.slices or None)
     worst = max(table.psi_p_ctr.max(), table.psi_p_cvr.max())
     report = {
         "reference_rows": len(ref), "current_rows": len(cur),
         "overall_psi_p_ctr": psi(ref.p_ctr, cur.p_ctr), "overall_psi_p_cvr": psi(ref.p_cvr, cur.p_cvr),
         "worst_daily_score_psi": float(worst), "status": drift_level(worst, a.watch, a.act),
-        "thresholds": {"watch": a.watch, "act": a.act},
+        "thresholds": {"watch": a.watch, "act": a.act}, "slices": a.slices,
+        "window_hours": float((cur.timestamp.max() - cur.timestamp.min()) / 3600),
         "daily": table.to_dict(orient="records"),
     }
     out = Path(a.out)
@@ -47,20 +52,21 @@ def main():
     import matplotlib.pyplot as plt
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.8))
     for c in ("psi_p_ctr", "psi_p_cvr", "psi_campaign"):
-        ax1.plot(table.day, table[c], "o-", label=c.replace("psi_", ""))
+        ax1.plot(table.hours, table[c], "o-", label=c.replace("psi_", ""))
     ax1.axhline(a.watch, ls="--", c="gray", lw=1)
     ax1.axhline(a.act, ls="--", c="red", lw=1)
-    ax1.set(xlabel="day of test window", ylabel="PSI vs validation window", title="Input / score drift")
+    ax1.set(xlabel="hours into test window", ylabel="PSI vs validation window", title="Input / score drift")
     ax1.legend()
     for c in ("calib_p_ctr", "calib_p_cvr"):
-        ax2.plot(table.day, table[c], "o-", label=c.replace("calib_", ""))
+        ax2.plot(table.hours, table[c], "o-", label=c.replace("calib_", ""))
     ax2.axhline(1.0, c="gray", lw=1)
-    ax2.set(xlabel="day of test window", ylabel="mean prediction / observed rate", title="Calibration by day")
+    ax2.set(xlabel="hours into test window", ylabel="mean prediction / observed rate", title="Calibration by day")
     ax2.legend()
     fig.tight_layout()
     fig.savefig(out / "drift.png", dpi=120)
 
     print(table.round(4).to_string(index=False))
+    print(json.dumps({k: v for k, v in report.items() if k != "daily"}))
     print(f"\nworst daily score PSI {worst:.4f} -> {report['status']}  (saved {out / 'drift.json'})")
 
 
