@@ -103,7 +103,7 @@ deployments that run training-prediction skew tests before a canary rollout.
 | Canary rollout, then gradual traffic shift | `adsrank-canary` InferenceService + `scripts/canary.py`: 10% -> 25% -> 50% of traffic, gated on errors, p99, mean pCTR ratio and score PSI; promote or roll back (`make canary`) | done (kind + KServe on CI: same model promoted, broken model rolled back at 10%) |
 | Prediction score and drift monitoring | `monitoring.py` / `run_drift.py`: daily PSI of pCTR, pCVR and campaign mix plus daily calibration ratio, test window vs validation window (`make drift`) | done: batch report, plus live rolling-window PSI on `/metrics` with Prometheus alert rules (`k8s/monitoring.yaml`, promtool-tested) |
 | Multi-GPU distributed training (A100, DDP / FSDP) | Single-machine CPU training on 2M rows | not in this repo |
-| Workflow orchestration of the training pipeline | Airflow DAG `dags/adsrank_retrain.py`: drift check -> retrain decision -> skew-checked export -> canary (import and task graph tested on Airflow 3.4 in CI) | done (not yet run on a schedule) |
+| Workflow orchestration of the training pipeline | Airflow DAG `dags/adsrank_retrain.py`: drift check -> retrain decision -> skew-checked export -> canary | done: one full run on Airflow 3.4 against kind + KServe (all tasks succeeded, new image promoted); not yet on a recurring schedule |
 | Candidate retrieval before ranking | Two-tower model with logQ-corrected in-batch softmax (`two_tower.py`) | done, with a leakage finding (see [Candidate retrieval](#candidate-retrieval-two-tower)) |
 
 The rows marked "not in this repo" are the remaining steps toward production. Canary rollout and
@@ -439,14 +439,14 @@ visible** at training time (observed CVR 3.9% vs true 7.8%). Delays are bimodal 
 | Oracle (complete labels, upper bound) | 0.8488 | 0.1959 | 0.7445 | 1.030 |
 | Naive (observed labels) | 0.8234 | 0.2282 | 0.8671 | 0.503 |
 | 24 h waiting window | 0.8069 | 0.2220 | 0.8437 | 0.617 |
-| DFM, exponential delay | 0.7976 | 0.4773 | 1.8139 | 1.936 |
-| DFM, 2-exponential mixture | 0.8024 | 0.2400 | 0.9120 | 0.912 |
-| DFM, delay distribution from history | 0.8004 | 0.2477 | 0.9413 | 1.010 |
+| DFM, exponential delay | 0.7976 | 0.4789 | 1.8200 | 1.934 |
+| DFM, 2-exponential mixture | 0.8024 | 0.2399 | 0.9115 | 0.911 |
+| DFM, delay distribution from history | 0.8004 | 0.2476 | 0.9410 | 1.010 |
 | **Naive, rescaled by expected visible share** | **0.8234** | **0.2248** | **0.8541** | **1.010** |
 
 - **Ignoring delays halves the predicted CVR** (calibration 0.50). In bidding that means
   under-bidding conversion campaigns by half.
-- **The original single-exponential DFM makes it worse** (calibration 1.94): one exponential
+- **The original single-exponential DFM makes it worse** (calibration 1.93): one exponential
   cannot fit "buys within the hour" and "comes back weeks later" at once, and a 63 h window cannot
   identify an 18-day tail. A two-component mixture fixes most of the bias (0.91).
 - **All DFM variants lose ~0.02 AUC against the naive model.** Their likelihood treats recent,
@@ -579,7 +579,7 @@ itself. In production this belongs to the service mesh or the ad server's router
 `run_drift.py` compares each time window of the test period with the validation window (by day,
 or `--slices` equal-time windows; the 2M-row subset's test period is only ~21 hours, so it uses
 8 slices of ~2.6 hours) and writes
-`results/drift.json` and `results/drift.png`:
+`results/drift.json` (and `results/drift.png`, not committed):
 
 - **PSI of pCTR and pCVR** (equal-count bins of the reference): needs no labels, so it is the
   early alarm while conversions are still arriving (see [Delayed feedback](#delayed-feedback)).
@@ -655,8 +655,13 @@ On the drift report above, the decision is **retrain**: pCVR calibration is 0.90
 7.9-10.6 hour window (34,026 rows). The 5.3-hour window with the campaign-mix spike (PSI 0.36)
 does not count on its own, because it has only ~10k rows.
 
-The DAG's import and task graph are tested on Airflow 3.4 in CI; it has not been run on a
-schedule against a live cluster yet.
+**End-to-end run** (experiments workflow, `airflow dags test adsrank_retrain` on Airflow 3.4,
+kind + KServe with stable v1 deployed, no `force`): download -> calibrate -> drift report ->
+decide chose **retrain** (the pCVR calibration reason above) and skipped `skip_retrain` ->
+export with skew check -> image `adsrank-serving:20261121t221239` -> canary 10% / 25% / 50% all
+passed (p99 7-8 / 8 ms, pCTR ratio 1.001-1.004, PSI <= 0.003) -> **promoted**; the stable
+InferenceService ended on the new image. The whole run took 275 s. It has not yet run on a
+recurring schedule.
 
 ## Candidate retrieval (two-tower)
 
@@ -692,6 +697,40 @@ runner numbers, 484,573 train clicks, 3 epochs, ~50 s per model.)
   trusting a retrieval number, check that the query features cannot name the item on their own.
 
 
+## Reproducibility
+
+`.github/workflows/reproduce.yml` reruns every experiment from scratch on GitHub-hosted runners
+(Criteo Attribution 2M rows; Criteo DAC from the `Criteo_x4` mirror, first 2M rows) and compares
+each numeric result with the committed `results/*.json` (`scripts/compare_results.py`, tolerance
+2% relative or 0.001 absolute; timings are listed but not judged).
+
+Run of 2026-11-21:
+
+| Result files | Values compared | Match |
+|---|---|---|
+| attribution_xgb, calibration, bidding, abtest | 291 | 291 |
+| attribution_deepfm, attribution_dcnv2, attribution_esmm, attribution_nn_clicked_cvr | 50 | 50 |
+| dac_xgboost, dac_deepfm, dac_dcnv2 | 13 | 13 |
+| drift (older single-window file) | 14 | 9 |
+
+- **Every committed model, calibration, bidding and A/B result reproduced** within tolerance on a
+  different machine, including the DCN-v2 / DeepFM / ESMM numbers.
+- The 5 drift differences are expected: the committed `drift.json` was the older single-window
+  report, and the rerun uses the 8 time slices described above. The file is now replaced with the
+  reproduced one, and its values match the drift table in this README.
+- `delayed_feedback.json` had not been committed; it is now added from the rerun. Every value in
+  the delayed-feedback table matches it except three DFM rows, which moved in the 3rd-4th decimal
+  (e.g. exponential DFM NE 1.8139 -> 1.8200, calibration 1.936 -> 1.934). The table now shows the
+  rerun's values; the conclusions do not change.
+- Latency is machine-dependent and is not compared: on the runner, model-only p50 for 50
+  candidates was 0.6 ms against 1.92 ms on the laptop. The serving tables above stay labelled as
+  laptop numbers.
+- README numbers were also cross-checked against the result files: every value in the Results
+  section that comes from a committed file (including the derived A/B confidence intervals and
+  the DAC AUC differences) matches.
+
+## Quickstart
+
 ```bash
 uv venv && source .venv/bin/activate
 make install              # package + mlflow + datasets + pytest
@@ -715,10 +754,12 @@ make drift                                # daily score / campaign PSI + calibra
 python -m adsrank.pipeline results/drift.json   # the retraining decision the DAG would take
 make two-tower ATTR_ROWS=2000000          # two-tower retrieval, three query-feature sets
 make canary-image canary CANARY_IMAGE=adsrank-serving:v2   # gated canary on kind (after deploy)
-gh workflow run experiments -f rows=2000000                 # both, end to end, on GitHub Actions
+gh workflow run experiments -f rows=2000000 -f airflow=true # drift, canary, two-tower, Airflow DAG on Actions
+gh workflow run reproduce -f rows=2000000                   # rerun everything and compare with results/
 python -m adsrank.prep --input data/train_2000000.csv --out data/criteo_2000000.parquet
-make train-gbdt ROWS=2000000 MLFLOW=http://localhost:5000   # MLFLOW is optional
-make dac-deep ROWS=2000000                                  # DeepFM and DCN-v2 on DAC
+python -m adsrank.train_gbdt --data data/criteo_2000000.parquet   # add --mlflow URL to track
+python -m adsrank.train_dac_deep --data data/criteo_2000000.parquet --model deepfm
+python -m adsrank.train_dac_deep --data data/criteo_2000000.parquet --model dcnv2
 ```
 
 ## Layout
@@ -755,7 +796,9 @@ scripts/loadtest.py     open-loop HTTP load test
 scripts/canary.py       canary rollout against two scoring servers (exit 0 = promote)
 scripts/canary_rollout.sh  deploy canary, run the gate in-cluster, promote or roll back
 scripts/break_model.py  broken model copy (empty vocabularies) to test the rollback
-.github/workflows/experiments.yml  drift + kind/KServe canary end to end (manual trigger)
+.github/workflows/experiments.yml  drift, kind/KServe canary, two-tower, Airflow DAG end to end (manual)
+.github/workflows/reproduce.yml    rerun every experiment and compare with results/*.json (manual)
+scripts/compare_results.py         the comparison report used by reproduce.yml
 serving/Dockerfile      scoring server image
 k8s/                    KServe InferenceServices (stable, canary)
 scripts/
