@@ -99,10 +99,10 @@ deployments that run training-prediction skew tests before a canary rollout.
 | Each model as an independent, autoscaled service | FastAPI scorer in a container, KServe InferenceService with HPA and resource limits (`k8s/inferenceservice.yaml`) | done |
 | Load testing and capacity sizing | Open-loop load test with p50 / p90 / p99 and an early stop on p99 (`scripts/loadtest.py`) | done |
 | Online experiment before full rollout | User-level A/B test with SRM, delta method, power analysis and CUPED | done (offline replay) |
-| Online feature store for low-latency features | Features are sent in the request payload (`instances`) | not in this repo |
+| Online feature store for low-latency features | Feast feature view + Redis online store for campaign features; the server can fill them by campaign id (`FEATURE_REPO`) | done, with a skew finding (see [Online feature store](#online-feature-store-feast--redis)) |
 | Canary rollout, then gradual traffic shift | `adsrank-canary` InferenceService + `scripts/canary.py`: 10% -> 25% -> 50% of traffic, gated on errors, p99, mean pCTR ratio and score PSI; promote or roll back (`make canary`) | done (kind + KServe on CI: same model promoted, broken model rolled back at 10%) |
 | Prediction score and drift monitoring | `monitoring.py` / `run_drift.py`: daily PSI of pCTR, pCVR and campaign mix plus daily calibration ratio, test window vs validation window (`make drift`) | done: batch report, plus live rolling-window PSI on `/metrics` with Prometheus alert rules (`k8s/monitoring.yaml`, promtool-tested) |
-| Multi-GPU distributed training (A100, DDP / FSDP) | Single-machine CPU training on 2M rows | not in this repo |
+| Multi-GPU distributed training (A100, DDP / FSDP) | `ddp.py`: DistributedDataParallel training of DeepFM, verified on 2 CPU processes (gloo) | code path verified; no GPUs here, so no multi-GPU speed-up measured |
 | Workflow orchestration of the training pipeline | Airflow DAG `dags/adsrank_retrain.py`: drift check -> retrain decision -> skew-checked export -> canary | done: one full run on Airflow 3.4 against kind + KServe (all tasks succeeded, new image promoted); not yet on a recurring schedule |
 | Candidate retrieval before ranking | Two-tower model with logQ-corrected in-batch softmax (`two_tower.py`) | done, with a leakage finding (see [Candidate retrieval](#candidate-retrieval-two-tower)) |
 
@@ -660,8 +660,18 @@ kind + KServe with stable v1 deployed, no `force`): download -> calibrate -> dri
 decide chose **retrain** (the pCVR calibration reason above) and skipped `skip_retrain` ->
 export with skew check -> image `adsrank-serving:20261121t221239` -> canary 10% / 25% / 50% all
 passed (p99 7-8 / 8 ms, pCTR ratio 1.001-1.004, PSI <= 0.003) -> **promoted**; the stable
-InferenceService ended on the new image. The whole run took 275 s. It has not yet run on a
-recurring schedule.
+InferenceService ended on the new image. The whole run took 275 s.
+
+**Daily schedule** (`.github/workflows/daily.yml`, 09:17 UTC every day): GitHub runners are
+ephemeral, so the state carried between days is the serving image. Each run pulls
+`ghcr.io/samyoungjunkim-pixel/adsrank-serving:stable` (yesterday's promoted model) and deploys
+it as stable on a fresh kind + KServe cluster, runs the DAG, and pushes a newly promoted image
+back as `:stable` plus a dated tag; a rollback or "no retrain" leaves `:stable` unchanged. The
+run summary records the decision, every canary step and the outcome. First run (2026-11-21,
+manual trigger): stable built from the current code (no `:stable` yet) -> retrain -> canary
+10 / 25 / 50% passed -> promoted `adsrank-serving:20261121t231914`, pushed as `:stable`.
+Caveat: every run reads the same first 2M Criteo rows, so this demonstrates the scheduled loop,
+not a changing data stream; the decision is the same every day.
 
 ## Candidate retrieval (two-tower)
 
@@ -682,6 +692,8 @@ runner numbers, 484,573 train clicks, 3 epochs, ~50 s per model.)
 | + cat1, cat6, cat7, cat9 | 0.874 | context popularity | 0.659 | 0.773 | 0.836 | 0.583 |
 | + cat1, cat6, cat7, cat9 | 0.874 | two-tower | 0.855 | 0.932 | 0.959 | 0.749 |
 | + all cat features except cat5 | 1.000 | two-tower | 0.998 | 0.999 | 1.000 | 0.994 |
+| hour, user recency + **previous click campaign** | 0.247 | previous click first, then popularity | 0.430 | 0.620 | 0.733 | 0.349 |
+| hour, user recency + **previous click campaign** | 0.247 | **two-tower** | **0.442** | **0.634** | **0.745** | **0.354** |
 
 - **The first result, recall@10 = 0.998, was a leak, not retrieval.** Criteo does not say which of
   cat1-cat9 describe the request and which describe the ad. Only cat5 is a function of the
@@ -689,13 +701,65 @@ runner numbers, 484,573 train clicks, 3 epochs, ~50 s per model.)
   the others look request-side one at a time (purity 0.40-0.90). Together they name the campaign:
   for 99.9998% of train clicks the campaign is the most common one for that combination of values
   ("identifiability"). A query tower that sees them only has to recognise the combination.
-- **Only the request-only row is a clean retrieval result**, and it is modest: +1.8 points of
-  recall@10 over popularity (0.237 vs 0.219), +3.1 at 50. The dataset has almost no request-side
-  signal: `uid` is nearly unique per row, so there is no user history, which is where most of a
-  production retrieval model's lift would come from.
+- **Without user history the clean result is modest**: +1.8 points of recall@10 over popularity
+  (0.237 vs 0.219), +3.1 at 50.
+- **User history doubles it.** Users do repeat in this data (`scripts/uid_repeats.py` on the
+  full 16.5M rows: 34% of the first 2M rows and 63% of all rows come from a user seen before; 20%
+  of test clicks in the 2M subset re-click a campaign the user clicked in train). Adding the
+  campaign of the user's previous click (strictly earlier in time, which an ad server knows at
+  request time) lifts recall@10 to 0.442, 2.0x popularity. 33% of test clicks have a previous
+  click, and for 28% it is the same campaign. The simple rule "previous click first, then
+  popularity" already reaches 0.430, so most of the lift is the history itself; the two-tower
+  adds 1.2 points on top. Identifiability stays low (0.247), so this is not the leak above.
+  (An earlier version of this README said the data had no user history; that was wrong.)
 - The rows with cat features are kept as a measurement of the leak, not as model quality. Before
   trusting a retrieval number, check that the query features cannot name the item on their own.
 
+
+## Online feature store (Feast + Redis)
+
+Ad-side features belong in an online store that the ad server reads by id, not in every request.
+`feature_store.py` builds a campaign feature table from the train window (latest `cpo`,
+impression and click counts), `feature_repo/` defines it as a Feast feature view, `feast
+materialize` loads it into Redis, and the scoring server fills `cpo` by campaign id when
+`FEATURE_REPO` is set. Measured on the runner (Feast 0.68, Redis 7, 500 requests of 50
+candidates, then all 20,000 test-window sample requests for the skew check):
+
+| Metric | Value |
+|---|---|
+| Lookup per request (50 candidates), p50 / p99 | 1.75 ms / 2.09 ms |
+| Campaign coverage | 100% (670 campaigns) |
+| Rows whose stored `cpo` differs from the `cpo` logged with the impression | **98.7%** |
+| Mean pCTR, store vs logged | 1.0004 |
+| Mean expected value (cpo x pCTR x pCVR), store vs logged | **1.087** |
+| Largest pCTR change on a single candidate | 0.081 |
+
+- **The lookup is fast enough** (about 2 ms p99 for a whole request, next to ~2 ms of model time).
+- **But `cpo` is not a campaign attribute**: 660 of 670 campaigns have more than one `cpo` value in
+  the train window (up to 1,731 distinct values). Serving the campaign's latest value instead of
+  the per-impression value is training-serving skew that leaves mean pCTR almost unchanged but
+  **inflates expected value, and so bids, by 8.7%**. The skew check is what shows it; the
+  conclusion is that `cpo` has to stay request-side, and the store is for features that really are
+  constant per id (counts, static attributes). The serving switch is kept to make the
+  comparison reproducible, not as the recommended setup.
+
+## Distributed training (DDP)
+
+`ddp.py` trains the DeepFM CTR model with `torch.distributed` DistributedDataParallel. Each rank
+takes its slice of the same global batch and DDP averages the gradients, so W ranks with batch/W
+rows each are one step of a single process on the full batch. `tests/test_ddp.py` checks that
+exactly: 2 ranks and 1 process end with the same weights (to 1e-5) and the replicas are
+identical. There are no GPUs here, so it runs on CPU processes with the gloo backend (`nccl` and
+`model.to(rank)` on GPUs).
+
+| DeepFM CTR, 2M rows, 2 epochs, global batch 4,096 | Test AUC | LogLoss | Calibration | Train time |
+|---|---|---|---|---|
+| 1 process (4 threads) | 0.6738 | 0.6069 | 0.963 | 18.6 s |
+| DDP, 2 processes (2 threads each, gloo) | 0.6738 | 0.6070 | 0.962 | 14.8 s |
+
+The replicas ended with identical weights (max difference 0.0) and the same test quality as one
+process. The time comparison is CPU threads vs processes on one 4-vCPU runner, not a multi-GPU
+speed-up.
 
 ## Reproducibility
 
@@ -752,7 +816,10 @@ make serve                                # local scoring server on :8080 (separ
 make loadtest                             # open-loop load test, p50 / p90 / p99
 make drift                                # daily score / campaign PSI + calibration (after calibrate)
 python -m adsrank.pipeline results/drift.json   # the retraining decision the DAG would take
-make two-tower ATTR_ROWS=2000000          # two-tower retrieval, three query-feature sets
+make two-tower ATTR_ROWS=2000000          # two-tower retrieval, four query-feature sets
+python -m adsrank.ddp --data data/attribution_2000000.parquet --world 2   # DDP vs one process
+python -m adsrank.feature_store build --data data/attribution_2000000.parquet   # then feast apply / materialize
+python scripts/uid_repeats.py data/attribution_full.parquet   # how often users repeat
 make canary-image canary CANARY_IMAGE=adsrank-serving:v2   # gated canary on kind (after deploy)
 gh workflow run experiments -f rows=2000000 -f airflow=true # drift, canary, two-tower, Airflow DAG on Actions
 gh workflow run reproduce -f rows=2000000                   # rerun everything and compare with results/
@@ -791,6 +858,11 @@ src/adsrank/
   two_tower.py          two-tower retrieval, identifiability check, recall@K vs popularity
   serving/live.py       rolling-window PSI and Prometheus metrics in the scoring server
 dags/adsrank_retrain.py  Airflow DAG: drift check -> retrain -> skew-checked export -> canary
+  ddp.py                DistributedDataParallel training (gloo on CPU, nccl on GPU)
+  feature_store.py      campaign features for Feast, online lookup, skew benchmark
+feature_repo/           Feast repository (Redis online store, campaign feature view)
+.github/workflows/daily.yml        daily DAG run on kind + KServe, promoted image kept in GHCR
+scripts/uid_repeats.py  user repeat statistics on the full Criteo Attribution data
 k8s/monitoring.yaml     PodMonitor and PrometheusRule (PSI and mean-shift alerts)
 scripts/loadtest.py     open-loop HTTP load test
 scripts/canary.py       canary rollout against two scoring servers (exit 0 = promote)
@@ -832,9 +904,10 @@ repository; the scripts download them from the original source.
 ## Future work
 
 - Train the DAC models on the full 45M rows (GPU) to close the gap to published AUC.
-- Run the Airflow DAG on a schedule against the kind cluster, with Prometheus scraping
-  `k8s/monitoring.yaml`, and record a full drift -> retrain -> canary cycle.
-- Retrieval with real request-side signal (user history), which this dataset does not have.
+- Multi-GPU DDP / FSDP on real GPUs (the code path is verified on CPU only).
+- Feed the daily run a moving window of the 30-day data instead of the same 2M rows, with
+  Prometheus scraping `k8s/monitoring.yaml` during the canary.
+- Longer user histories (last N clicks) in the query tower, on the full 16.5M rows.
 - A traffic-shaped spend plan for the pacer.
 
 ## References
