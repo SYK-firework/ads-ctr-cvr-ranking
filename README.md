@@ -100,12 +100,13 @@ deployments that run training-prediction skew tests before a canary rollout.
 | Load testing and capacity sizing | Open-loop load test with p50 / p90 / p99 and an early stop on p99 (`scripts/loadtest.py`) | done |
 | Online experiment before full rollout | User-level A/B test with SRM, delta method, power analysis and CUPED | done (offline replay) |
 | Online feature store for low-latency features | Features are sent in the request payload (`instances`) | not in this repo |
-| Canary rollout, then gradual traffic shift | One model version per deployment | not in this repo |
-| Prediction score and drift monitoring | Calibration is measured offline per run | not in this repo |
+| Canary rollout, then gradual traffic shift | `adsrank-canary` InferenceService + `scripts/canary.py`: 10% -> 25% -> 50% of traffic, gated on errors, p99, mean pCTR ratio and score PSI; promote or roll back (`make canary`) | implemented, unit-tested; not yet run on the cluster |
+| Prediction score and drift monitoring | `monitoring.py` / `run_drift.py`: daily PSI of pCTR, pCVR and campaign mix plus daily calibration ratio, test window vs validation window (`make drift`) | implemented, unit-tested; offline batch report, no live alerting |
 | Multi-GPU distributed training (A100, DDP / FSDP) | Single-machine CPU training on 2M rows | not in this repo |
 
-The rows marked "not in this repo" are the next steps toward production; canary rollout and
-drift monitoring are the first two.
+The rows marked "not in this repo" are the remaining steps toward production. Canary rollout and
+drift monitoring are implemented (see [Rollout and monitoring](#rollout-and-monitoring)); their
+results on the real cluster and data are not recorded yet.
 
 ## Results
 
@@ -516,6 +517,57 @@ candidates per request, each replica limited to 1 CPU; the WSL VM has **2 CPUs**
 - Each replica uses ~450-480 MiB (two boosters plus Python), close to the first 512 MiB limit;
   the manifest now requests 512 MiB with a 768 MiB limit.
 
+## Rollout and monitoring
+
+Following the deployment order in Coupang's ML platform post: skew test (`make export`) ->
+canary -> gradual rollout, with drift monitoring after release.
+
+**Status: code and unit tests are in place (`tests/test_monitoring.py`); the canary has not yet
+been run on the kind cluster and `make drift` has not yet been run on the Criteo predictions, so
+no measured numbers are reported here.**
+
+### Canary rollout (`make canary-image canary CANARY_IMAGE=adsrank-serving:v2`)
+
+1. The new model is deployed as a second InferenceService, `adsrank-canary`
+   (`k8s/inferenceservice-canary.yaml`), with the same CPU / memory limits as stable.
+2. `scripts/canary.py` runs from a pod inside the cluster and sends 10%, then 25%, then 50% of an
+   open-loop request stream to the canary. Requests are routed by hash, and both arms are measured
+   at the same time on the same request pool, so the comparison is canary vs stable, not canary vs
+   last week.
+3. Each step passes only if all checks pass (`monitoring.canary_gate`):
+
+   | Check | Default threshold | Why |
+   |---|---|---|
+   | Error rate | canary <= stable + 0.5 pp | broken model file, feature mismatch |
+   | p99 latency | canary <= 1.5x stable (ignoring < 20 ms differences) | the ads request has a fixed latency budget |
+   | Mean pCTR, canary / stable | within 0.95-1.05 | bids are `cpo x pCTR x pCVR`, so a scale change moves every bid and the spend |
+   | Score PSI, canary vs stable | <= 0.1 | the ranking distribution changed shape |
+
+4. All steps pass -> `isvc/adsrank` is patched to the new image and the canary is deleted.
+   Any failure -> the canary is deleted and stable is untouched (`scripts/canary_rollout.sh`).
+
+KServe has a built-in `canaryTrafficPercent`, but it needs Serverless mode (Knative); this cluster
+runs raw deployment with HPA, which has no weighted routing, so the rollout script splits traffic
+itself. In production this belongs to the service mesh or the ad server's router.
+
+The mean-ratio check is there because PSI alone is weak against a uniform scale shift: in a
+synthetic check (not Criteo data), scaling every pCTR by 1.1x gave a score PSI of only ~0.02
+("stable") while the calibration ratio moved to ~1.11.
+
+### Drift report (`make drift`, after `make calibrate`)
+
+`run_drift.py` compares each day of the test window with the validation window and writes
+`results/drift.json` and `results/drift.png`:
+
+- **PSI of pCTR and pCVR** (equal-count bins of the reference): needs no labels, so it is the
+  early alarm while conversions are still arriving (see [Delayed feedback](#delayed-feedback)).
+- **PSI of the campaign mix** (top 50 campaigns + "other"): new campaigns show up as input drift.
+- **Calibration ratio by day** (mean prediction / observed rate; CVR on clicked rows): confirms
+  whether the drift costs money once labels are in. This is the daily view of the 3-4% CTR
+  under-prediction on the test window noted above.
+
+Levels: PSI < 0.1 stable, 0.1-0.25 watch, > 0.25 act (common rule of thumb, configurable).
+
 ## Quickstart
 
 ```bash
@@ -537,6 +589,8 @@ make delayed ATTR_ROWS=2000000            # delayed-feedback CVR study
 make export bench ATTR_ROWS=2000000       # export serving models (skew check) + model latency
 make serve                                # local scoring server on :8080 (separate terminal)
 make loadtest                             # open-loop load test, p50 / p90 / p99
+make drift                                # daily score / campaign PSI + calibration (after calibrate)
+make canary-image canary CANARY_IMAGE=adsrank-serving:v2   # gated canary on kind (after deploy)
 python -m adsrank.prep --input data/train_2000000.csv --out data/criteo_2000000.parquet
 make train-gbdt ROWS=2000000 MLFLOW=http://localhost:5000   # MLFLOW is optional
 make dac-deep ROWS=2000000                                  # DeepFM and DCN-v2 on DAC
@@ -564,9 +618,14 @@ src/adsrank/
   delayed.py            observed-label replay and the DFM likelihood
   run_delayed.py        delayed-feedback CVR study
   serving/              scorer (numpy feature path), export + skew check, FastAPI app, benchmark
+  monitoring.py         PSI (numeric / categorical), daily drift table, canary gate
+  run_drift.py          daily drift report, test window vs validation window
+  canary.py             step-wise canary rollout with hash routing and per-step gate
 scripts/loadtest.py     open-loop HTTP load test
+scripts/canary.py       canary rollout against two scoring servers (exit 0 = promote)
+scripts/canary_rollout.sh  deploy canary, run the gate in-cluster, promote or roll back
 serving/Dockerfile      scoring server image
-k8s/                    KServe InferenceService
+k8s/                    KServe InferenceServices (stable, canary)
 scripts/
   download_criteo.sh        stream the first N rows without downloading the full 4.3GB archive
   download_attribution.py   stream N rows of Criteo Attribution from Hugging Face into Parquet
@@ -598,7 +657,10 @@ repository; the scripts download them from the original source.
 ## Future work
 
 - Train the DAC models on the full 45M rows (GPU) to close the gap to published AUC.
-- Canary rollout and prediction-drift monitoring for the KServe deployment.
+- Run the canary on the kind cluster (good and deliberately broken model) and `make drift` on the
+  Criteo predictions, and record the results.
+- Live drift monitoring: export score histograms to Prometheus and alert in Grafana instead of a
+  batch report.
 - A traffic-shaped spend plan for the pacer.
 
 ## References

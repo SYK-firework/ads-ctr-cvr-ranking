@@ -4,7 +4,7 @@ RAW = $(DATA_DIR)/train_$(ROWS).txt
 PARQUET = $(DATA_DIR)/criteo_$(ROWS).parquet
 MLFLOW ?=
 
-.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid abtest train-deepctr delayed export bench serve loadtest image deploy loadtest-cluster dac-deep test all
+.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid abtest train-deepctr delayed export bench serve loadtest image deploy loadtest-cluster canary-image canary drift dac-deep test all
 
 ATTR_ROWS ?= 2000000
 
@@ -87,6 +87,21 @@ loadtest-cluster:
 	kubectl run adsrank-loadtest --image=$(IMAGE) --image-pull-policy=IfNotPresent --restart=Never \
 	  --overrides='{"spec":{"containers":[{"name":"adsrank-loadtest","image":"$(IMAGE)","imagePullPolicy":"IfNotPresent","resources":{"limits":{"cpu":"1","memory":"512Mi"}},"command":["python","/app/loadtest.py","--url","http://adsrank-predictor/predict","--samples","/app/model/sample_requests.json","--rps","$(CLUSTER_RPS)","--out","/tmp/lt.json"]}]}}'
 	kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/adsrank-loadtest --timeout=900s; kubectl logs adsrank-loadtest
+
+# ---- rollout and monitoring ----
+CANARY_IMAGE ?= adsrank-serving:v2
+
+# build the new model version as a separate image tag and load it into kind
+canary-image:
+	docker build -f serving/Dockerfile -t $(CANARY_IMAGE) . && kind load docker-image $(CANARY_IMAGE) --name mlp
+
+# gated canary: 10% -> 25% -> 50% of traffic, promote or roll back (needs `make deploy` first)
+canary:
+	bash scripts/canary_rollout.sh $(CANARY_IMAGE)
+
+# daily score / campaign-mix PSI and calibration of the test window vs the validation window
+drift:
+	python -m adsrank.run_drift --ref $(DATA_DIR)/preds_valid.parquet --cur $(DATA_DIR)/preds_test.parquet
 
 prep: $(PARQUET)
 $(PARQUET): $(RAW)

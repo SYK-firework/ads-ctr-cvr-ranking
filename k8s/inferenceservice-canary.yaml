@@ -1,0 +1,30 @@
+# Canary: the new model version as a second InferenceService next to `adsrank`.
+# One replica, same resource limits as stable, so latency is compared like for like.
+# Traffic is split by scripts/canary.py (KServe canaryTrafficPercent needs Serverless mode; this
+# cluster runs raw deployment). `make canary` deploys this, runs the gated rollout, then promotes
+# (stable moves to this image) or rolls back (this service is deleted).
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: adsrank-canary
+  labels:
+    app.kubernetes.io/part-of: adsrank
+    rollout: canary
+  annotations:
+    serving.kserve.io/autoscalerClass: hpa
+spec:
+  predictor:
+    minReplicas: 1
+    maxReplicas: 1
+    containers:
+      - name: kserve-container
+        image: adsrank-serving:v2          # overridden by `make canary CANARY_IMAGE=...`
+        imagePullPolicy: IfNotPresent
+        ports:
+          - containerPort: 8080
+            protocol: TCP
+        readinessProbe:
+          httpGet: { path: /health, port: 8080 }
+        resources:
+          requests: { cpu: "500m", memory: "512Mi" }
+          limits: { cpu: "1", memory: "768Mi" }

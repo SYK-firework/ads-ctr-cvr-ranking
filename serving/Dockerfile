@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY src/adsrank /app/adsrank
 COPY serving/model /app/model
 COPY scripts/loadtest.py /app/loadtest.py
+COPY scripts/canary.py /app/canary.py
 ENV MODEL_DIR=/app/model PYTHONPATH=/app
 EXPOSE 8080
 # one worker per pod; scale out with replicas (HPA) rather than processes inside a pod
