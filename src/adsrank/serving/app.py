@@ -4,6 +4,8 @@
                             "timestamp": ...}, ...]}
   response: {"model_version": ..., "predictions": [{"p_ctr": ..., "p_cvr": ..., "expected_value": ...}, ...]}
 
+  FEATURE_REPO=feature_repo: look up the campaign's cpo in the Feast online store (Redis) instead
+               of taking it from the request (adsrank.feature_store)
   GET /metrics: Prometheus text format; live pCTR histogram and rolling PSI vs the export-time
                reference (adsrank.serving.live), when the model dir has reference_scores.json
 
@@ -22,6 +24,11 @@ from adsrank.serving.scorer import Scorer
 MODEL_DIR = os.environ.get("MODEL_DIR", "serving/model")
 scorer = Scorer(MODEL_DIR)
 live = LiveDrift.load(MODEL_DIR, window=int(os.environ.get("LIVE_WINDOW", "50000")))
+# optional: ad-side features (cpo) from the Feast online store instead of the request payload
+online = None
+if os.environ.get("FEATURE_REPO"):
+    from adsrank.feature_store import OnlineCampaignFeatures
+    online = OnlineCampaignFeatures(os.environ["FEATURE_REPO"])
 app = FastAPI(title="adsrank")
 
 
@@ -37,7 +44,10 @@ def health():
 @app.post("/predict")
 def predict(req: Request):
     t = time.perf_counter()
-    s = scorer.score(req.instances)
+    rows = req.instances
+    if online is not None:
+        rows, _ = online.enrich(rows)
+    s = scorer.score(rows)
     if live is not None:
         live.observe(s["p_ctr"])
     preds = [{"p_ctr": float(a), "p_cvr": float(b), "expected_value": float(c)}

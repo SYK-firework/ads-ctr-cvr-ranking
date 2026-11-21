@@ -22,3 +22,6 @@ __pycache__/
 # exported serving artifacts (rebuilt by `make export`)
 serving/model/
 tests/prometheus/rules.yml
+
+# Feast: generated source data and registry
+feature_repo/data/

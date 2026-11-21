@@ -1,0 +1,12 @@
+# Feast repository for ad-side features (see src/adsrank/feature_store.py).
+# Online store: Redis on localhost:6379. Offline store: the parquet file
+# written by `python -m adsrank.feature_store build`.
+project: adsrank
+registry: data/registry.db
+provider: local
+online_store:
+  type: redis
+  connection_string: "localhost:6379"
+offline_store:
+  type: file
+entity_key_serialization_version: 3
