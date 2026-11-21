@@ -30,6 +30,17 @@ for _ in $(seq 1 180); do
 done
 kubectl logs "$POD"
 
+# live drift metrics each arm computed from the traffic it just served (GET /metrics)
+for svc in adsrank-predictor adsrank-canary-predictor; do
+  echo "--- /metrics ${svc}"
+  kubectl delete pod adsrank-metrics --ignore-not-found >/dev/null
+  kubectl run adsrank-metrics --image="$CANARY_IMAGE" --image-pull-policy=IfNotPresent --restart=Never -q \
+    --command -- python -c "import urllib.request; print(urllib.request.urlopen('http://${svc}/metrics').read().decode())" >/dev/null
+  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/adsrank-metrics --timeout=60s >/dev/null || true
+  kubectl logs adsrank-metrics | grep -E '^adsrank_(requests_total|candidates_total|pctr_psi|pctr_mean|pctr_reference_mean|live_window)' || true
+done
+kubectl delete pod adsrank-metrics --ignore-not-found >/dev/null
+
 if [[ "$phase" == "Succeeded" ]]; then
   echo "promote: isvc/adsrank -> ${CANARY_IMAGE}"
   kubectl patch isvc adsrank --type json \

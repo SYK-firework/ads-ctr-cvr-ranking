@@ -1,0 +1,58 @@
+# Live score monitoring for the scoring servers (needs the Prometheus Operator, e.g. kube-prometheus-stack).
+#   PodMonitor     : scrape GET /metrics on every adsrank pod (stable and canary)
+#   PrometheusRule : alert on the same two signals the canary gate uses
+#     - score PSI of the rolling window vs the export-time reference (no labels needed)
+#     - mean pCTR vs the reference mean (a uniform scale shift that PSI can miss)
+# Thresholds follow the batch report: PSI > 0.25 = act. `for:` avoids paging on a short burst.
+# The `release` label must match your Prometheus' selector (kube-prometheus-stack default shown).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: adsrank
+  labels: { release: kube-prometheus-stack }
+spec:
+  selector:
+    matchExpressions:
+      - { key: serving.kserve.io/inferenceservice, operator: In, values: [adsrank, adsrank-canary] }
+  podMetricsEndpoints:
+    - targetPort: 8080
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: adsrank-score-drift
+  labels: { release: kube-prometheus-stack }
+spec:
+  groups:
+    - name: adsrank.drift
+      rules:
+        - alert: AdsrankScorePSIHigh
+          expr: max by (pod, model_version) (adsrank_pctr_psi) > 0.25 and on (pod) adsrank_live_window > 5000
+          for: 10m
+          labels: { severity: page }
+          annotations:
+            summary: "pCTR distribution drifted (PSI {{ $value | printf \"%.2f\" }}) on {{ $labels.pod }}"
+            description: "Rolling-window PSI vs the export-time reference is above 0.25. Check the campaign mix and the feature pipeline; a collapsed distribution usually means a broken vocabulary or feature."
+        - alert: AdsrankScorePSIWatch
+          expr: max by (pod, model_version) (adsrank_pctr_psi) > 0.1 and on (pod) adsrank_live_window > 5000
+          for: 30m
+          labels: { severity: ticket }
+          annotations:
+            summary: "pCTR distribution moving (PSI {{ $value | printf \"%.2f\" }}) on {{ $labels.pod }}"
+        - alert: AdsrankScoreMeanShift
+          expr: |
+            abs(adsrank_pctr_mean / adsrank_pctr_reference_mean - 1) > 0.1
+              and on (pod) adsrank_live_window > 5000
+          for: 15m
+          labels: { severity: page }
+          annotations:
+            summary: "Mean pCTR {{ $value | humanizePercentage }} away from the reference on {{ $labels.pod }}"
+            description: "Bids are cpo x pCTR x pCVR, so a mean shift moves every bid and the spend. Compare with observed CTR before recalibrating."
+        - alert: AdsrankNoTraffic
+          expr: sum(rate(adsrank_requests_total[5m])) == 0
+          for: 10m
+          labels: { severity: page }
+          annotations:
+            summary: "adsrank received no scoring requests for 10 minutes"

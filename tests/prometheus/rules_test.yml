@@ -1,0 +1,55 @@
+# promtool unit tests for k8s/monitoring.yaml (run by the `prometheus-rules` CI job:
+# the PrometheusRule spec is extracted to rules.yml first).
+rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+  - name: broken model -> PSI page after 10 minutes, healthy pod stays quiet
+    interval: 1m
+    input_series:
+      - series: 'adsrank_pctr_psi{pod="bad", model_version="v3"}'
+        values: '8.5x20'
+      - series: 'adsrank_live_window{pod="bad", model_version="v3"}'
+        values: '50000x20'
+      - series: 'adsrank_pctr_psi{pod="good", model_version="v2"}'
+        values: '0.002x20'
+      - series: 'adsrank_live_window{pod="good", model_version="v2"}'
+        values: '50000x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AdsrankScorePSIHigh
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: AdsrankScorePSIHigh
+        exp_alerts:
+          - exp_labels: { severity: page, pod: bad, model_version: v3 }
+            exp_annotations:
+              summary: "pCTR distribution drifted (PSI 8.50) on bad"
+              description: "Rolling-window PSI vs the export-time reference is above 0.25. Check the campaign mix and the feature pipeline; a collapsed distribution usually means a broken vocabulary or feature."
+  - name: too few scores -> no alert even if PSI is high
+    interval: 1m
+    input_series:
+      - series: 'adsrank_pctr_psi{pod="new", model_version="v4"}'
+        values: '3x20'
+      - series: 'adsrank_live_window{pod="new", model_version="v4"}'
+        values: '200x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: AdsrankScorePSIHigh
+        exp_alerts: []
+  - name: uniform 12% scale shift -> mean alert
+    interval: 1m
+    input_series:
+      - series: 'adsrank_pctr_mean{pod="p", model_version="v5"}'
+        values: '0.112x30'
+      - series: 'adsrank_pctr_reference_mean{pod="p", model_version="v5"}'
+        values: '0.1x30'
+      - series: 'adsrank_live_window{pod="p", model_version="v5"}'
+        values: '50000x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: AdsrankScoreMeanShift
+        exp_alerts:
+          - exp_labels: { severity: page, pod: p, model_version: v5 }
+            exp_annotations:
+              summary: "Mean pCTR 12% away from the reference on p"
+              description: "Bids are cpo x pCTR x pCVR, so a mean shift moves every bid and the spend. Compare with observed CTR before recalibrating."

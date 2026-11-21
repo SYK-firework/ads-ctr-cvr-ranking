@@ -4,6 +4,7 @@ Writes to --out (default serving/model):
   ctr.json, cvr.json        XGBoost boosters
   features.json             feature order and categorical vocabularies (train window only)
   sample_requests.json      raw test-window candidates for the load test
+  reference_scores.json     validation-window pCTR deciles, the reference for live drift (/metrics)
 Then runs a training-serving skew check: the same test rows scored through the training feature
 pipeline (pandas) and through the serving path (Scorer) must give identical predictions.
 
@@ -16,6 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from adsrank.attribution import CATS, FEATURES, build_features, load, time_split
+from adsrank.serving.live import REFERENCE_FILE, reference_from_scores
 from adsrank.serving.scorer import Scorer
 from adsrank.train_attribution import fit
 
@@ -49,6 +51,9 @@ def main() -> None:
     (out / "features.json").write_text(json.dumps(
         {"features": FEATURES, "vocab": vocab, "version": Path(a.data).stem}, indent=0))
 
+    # reference distribution for live drift: validation-window pCTR, as served (same booster)
+    (out / REFERENCE_FILE).write_text(json.dumps(reference_from_scores(ctr.predict_proba(va[FEATURES])[:, 1])))
+
     raw = df.loc[te.index, RAW].sample(n=min(a.samples, len(te)), random_state=0)
     rows = [{k: (float(v) if k == "cpo" else int(v)) for k, v in r.items()} for r in raw.to_dict("records")]
     (out / "sample_requests.json").write_text(json.dumps(rows))
@@ -59,7 +64,7 @@ def main() -> None:
     ref_ctr = ctr.predict_proba(te.loc[raw.index, FEATURES])[:, 1]
     ref_cvr = cvr.predict_proba(te.loc[raw.index, FEATURES])[:, 1]
     diff = max(float(np.abs(s["p_ctr"] - ref_ctr).max()), float(np.abs(s["p_cvr"] - ref_cvr).max()))
-    print(f"exported to {out}: ctr.json, cvr.json, features.json, sample_requests.json ({len(rows):,} rows)")
+    print(f"exported to {out}: ctr.json, cvr.json, features.json, reference_scores.json, sample_requests.json ({len(rows):,} rows)")
     print(f"training-serving skew check: max |diff| = {diff:.2e} -> {'OK' if diff < 1e-5 else 'MISMATCH'}")
     if diff >= 1e-5:
         raise SystemExit(1)

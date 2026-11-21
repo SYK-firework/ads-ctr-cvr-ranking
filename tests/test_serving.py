@@ -26,6 +26,8 @@ def exported(tmp_path_factory):
         counts = df.loc[split == "train", c].value_counts()
         vocab[c] = [int(v) for v in counts[counts >= 20].index]
     (d / "features.json").write_text(json.dumps({"features": FEATURES, "vocab": vocab}))
+    from adsrank.serving.live import REFERENCE_FILE, reference_from_scores
+    (d / REFERENCE_FILE).write_text(json.dumps(reference_from_scores(ctr.predict_proba(va[FEATURES])[:, 1])))
     return d, df, te, ctr, cvr
 
 
@@ -59,3 +61,6 @@ def test_http_endpoint(exported, monkeypatch):
     rows = df.loc[te.index[:3], CATS + ["cpo", "time_since_last_click", "timestamp"]].to_dict("records")
     r = c.post("/predict", json={"instances": [{k: (float(v) if k == "cpo" else int(v)) for k, v in x.items()} for x in rows]})
     assert r.status_code == 200 and len(r.json()["predictions"]) == 3
+    m = c.get("/metrics").text
+    assert "adsrank_requests_total" in m and "adsrank_pctr_psi" in m
+    assert 'le="+Inf"} 3' in m
