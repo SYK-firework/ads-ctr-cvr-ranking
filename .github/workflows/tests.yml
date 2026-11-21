@@ -48,3 +48,4 @@ jobs:
         run: |
           airflow db migrate >/dev/null
           pytest -q tests/test_pipeline_decision.py -rs
+          python -c "import airflow; print('airflow', airflow.__version__)"

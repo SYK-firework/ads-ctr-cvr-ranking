@@ -4,7 +4,7 @@ RAW = $(DATA_DIR)/train_$(ROWS).txt
 PARQUET = $(DATA_DIR)/criteo_$(ROWS).parquet
 MLFLOW ?=
 
-.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid abtest train-deepctr delayed export bench serve loadtest image deploy loadtest-cluster canary-image canary drift dac-deep test all
+.PHONY: install data data-attribution prep train-gbdt train-attribution train-esmm calibrate bid abtest train-deepctr delayed export bench serve loadtest image deploy loadtest-cluster canary-image canary drift two-tower dac-deep test all
 
 ATTR_ROWS ?= 2000000
 
@@ -87,6 +87,10 @@ loadtest-cluster:
 	kubectl run adsrank-loadtest --image=$(IMAGE) --image-pull-policy=IfNotPresent --restart=Never \
 	  --overrides='{"spec":{"containers":[{"name":"adsrank-loadtest","image":"$(IMAGE)","imagePullPolicy":"IfNotPresent","resources":{"limits":{"cpu":"1","memory":"512Mi"}},"command":["python","/app/loadtest.py","--url","http://adsrank-predictor/predict","--samples","/app/model/sample_requests.json","--rps","$(CLUSTER_RPS)","--out","/tmp/lt.json"]}]}}'
 	kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/adsrank-loadtest --timeout=900s; kubectl logs adsrank-loadtest
+
+# two-tower candidate retrieval (query tower: request context, ad tower: campaign), recall@K
+two-tower:
+	python -m adsrank.two_tower --data $(ATTR_PARQUET)
 
 # ---- rollout and monitoring ----
 CANARY_IMAGE ?= adsrank-serving:v2

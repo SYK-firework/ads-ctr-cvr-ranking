@@ -32,9 +32,9 @@ def test_small_windows_do_not_trigger_on_mix_or_calibration():
 def test_dag_structure():
     pytest.importorskip("airflow")
     from airflow.models import DagBag
-    bag = DagBag(dag_folder=str(Path(__file__).parents[1] / "dags"), include_examples=False)
+    bag = DagBag(dag_folder=str(Path(__file__).parents[1] / "dags"))   # examples off via env in CI
     assert not bag.import_errors, bag.import_errors
-    dag = bag.get_dag("adsrank_retrain")
+    dag = bag.dags["adsrank_retrain"]
     t = {x.task_id: x for x in dag.tasks}
     assert set(t) == {"download_data", "calibrate", "drift_report", "decide", "skip_retrain",
                       "export_with_skew_check", "build_image", "canary_rollout"}

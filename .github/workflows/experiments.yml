@@ -46,6 +46,8 @@ jobs:
         run: make data-attribution ATTR_ROWS=$ROWS
       - run: make calibrate ATTR_ROWS=$ROWS 2>&1 | tee results/calibrate.log
       - run: make drift 2>&1 | tee results/drift.log
+      - name: Retraining decision on this drift report (what the Airflow DAG's branch would do)
+        run: python -m adsrank.pipeline results/drift.json | tee results/retrain_decision.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -54,6 +56,31 @@ jobs:
             results/drift.*
             results/calibration.json
             results/calibrate.log
+            results/retrain_decision.json
+
+  two-tower:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13", cache: pip }
+      - run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[data,dev]"
+      - uses: actions/cache@v4
+        id: data
+        with:
+          path: data/attribution_${{ inputs.rows }}.parquet
+          key: attribution-${{ inputs.rows }}
+      - if: steps.data.outputs.cache-hit != 'true'
+        run: make data-attribution ATTR_ROWS=$ROWS
+      - run: make two-tower ATTR_ROWS=$ROWS 2>&1 | tee results/two_tower.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: two-tower
+          path: results/two_tower.*
 
   canary:
     if: ${{ inputs.canary }}
