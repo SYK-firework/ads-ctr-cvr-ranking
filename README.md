@@ -61,6 +61,52 @@ advertiser ROI and platform revenue. This repository builds and evaluates each p
 
 See [docs/roadmap.md](docs/roadmap.md) for the full plan.
 
+## Architecture
+
+The repository covers one ads ranking loop end to end: offline training and evaluation on logged
+data, then an online scoring service that the auction calls for each request.
+
+```mermaid
+flowchart LR
+    subgraph offline["Offline: train and evaluate"]
+        L[("Criteo logs<br/>impression, click, conversion")] --> F["Features<br/>time-based split, train-only vocab<br/>attribution.py / prep.py"]
+        F --> M["pCTR / pCVR models<br/>XGBoost, DeepFM, DCN-v2, ESMM"]
+        M --> C["Calibration<br/>Platt, Isotonic, downsampling fix"]
+        C --> D["Delayed-conversion correction<br/>delayed.py"]
+        D --> B["Auction replay and bidding<br/>value-based bids, pacing<br/>bidding.py"]
+        B --> AB["A/B test analysis<br/>SRM, delta method, CUPED<br/>abtest.py"]
+    end
+    subgraph online["Online: serve"]
+        E["Export + skew check<br/>serving/export.py"] --> S["Scoring service<br/>FastAPI, serving/app.py"]
+        S --> K["KServe on Kubernetes<br/>autoscaling, CPU / memory limits"]
+        R(["Ad request:<br/>user + candidate ads"]) --> K
+        K --> A(["Auction: rank by<br/>bid x pCTR x pCVR"])
+    end
+    C --> E
+```
+
+### How this maps to a production ads platform
+
+The deployment steps below follow the ML platform that Coupang describes publicly (Baek et al.,
+2023): containerized pipelines on Kubernetes, a Feast feature store, Seldon model serving, and
+deployments that run training-prediction skew tests before a canary rollout.
+
+| Production practice (Coupang ML platform blog) | In this repo | Status |
+|---|---|---|
+| Frameworks: PyTorch, TensorFlow, scikit-learn, XGBoost | XGBoost, PyTorch (DeepFM, DCN-v2, ESMM), scikit-learn (calibration) | done |
+| Experiment tracking and model registry | MLflow logging in `train_attribution.py` / `train_esmm.py` (optional `--mlflow`) | done |
+| Training-prediction skew test before deployment | `serving/export.py` scores the same rows offline and through the serving path; it caught a real bug (serving ignored the early-stopping iteration) | done |
+| Each model as an independent, autoscaled service | FastAPI scorer in a container, KServe InferenceService with HPA and resource limits (`k8s/inferenceservice.yaml`) | done |
+| Load testing and capacity sizing | Open-loop load test with p50 / p90 / p99 and an early stop on p99 (`scripts/loadtest.py`) | done |
+| Online experiment before full rollout | User-level A/B test with SRM, delta method, power analysis and CUPED | done (offline replay) |
+| Online feature store for low-latency features | Features are sent in the request payload (`instances`) | not in this repo |
+| Canary rollout, then gradual traffic shift | One model version per deployment | not in this repo |
+| Prediction score and drift monitoring | Calibration is measured offline per run | not in this repo |
+| Multi-GPU distributed training (A100, DDP / FSDP) | Single-machine CPU training on 2M rows | not in this repo |
+
+The rows marked "not in this repo" are the next steps toward production; canary rollout and
+drift monitoring are the first two.
+
 ## Results
 
 ### Criteo Attribution: CTR + CVR (impression -> click -> attributed conversion)
@@ -552,6 +598,7 @@ repository; the scripts download them from the original source.
 ## Future work
 
 - Train the DAC models on the full 45M rows (GPU) to close the gap to published AUC.
+- Canary rollout and prediction-drift monitoring for the KServe deployment.
 - A traffic-shaped spend plan for the pacer.
 
 ## References
@@ -591,6 +638,7 @@ repository; the scripts download them from the original source.
 
 ### Industry context
 - Baek, H. J., Ketha, H., Ray, J., Min, J., Sabbah, M., Panchal, R., Adunuthula, S., Kalva, T. R., & Tan, E. (2023, September 8). Meet Coupang's machine learning platform. *Coupang Engineering Blog*. https://medium.com/coupang-engineering/meet-coupangs-machine-learning-platform-cd00e9ccc172
+  (Korean edition, 2023, November 23: https://medium.com/coupang-engineering/%EC%BF%A0%ED%8C%A1%EC%9D%98-%EB%A8%B8%EC%8B%A0%EB%9F%AC%EB%8B%9D-%ED%94%8C%EB%9E%AB%ED%8F%BC%EC%9D%84-%ED%86%B5%ED%95%9C-ml-%EA%B0%9C%EB%B0%9C-%EA%B0%80%EC%86%8D%ED%99%94-de29804148bb)
 
 ## License
 
