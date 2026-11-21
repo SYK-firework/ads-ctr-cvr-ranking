@@ -26,7 +26,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.13", cache: pip }
-      - run: pip install -e ".[data,dev]"
+      - run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[data,dev]"
       - uses: actions/cache@v4
         id: data
         with: { path: "data/attribution_${{ inputs.rows }}.parquet", key: "attribution-${{ inputs.rows }}" }
@@ -123,8 +125,11 @@ jobs:
           rm data/Criteo_x4.zip
           wc -l data/train_2000000.csv
       - run: rm -f results/*.json && python -m adsrank.prep --input data/train_2000000.csv --out data/criteo_2000000.parquet
-      - run: make train-gbdt ROWS=2000000
-      - run: make dac-deep ROWS=2000000
+      # call the modules directly: the make targets depend on the retired original download (train_*.txt)
+      - run: python -m adsrank.train_gbdt --data data/criteo_2000000.parquet
+      - run: |
+          python -m adsrank.train_dac_deep --data data/criteo_2000000.parquet --model deepfm
+          python -m adsrank.train_dac_deep --data data/criteo_2000000.parquet --model dcnv2
       - run: for f in results/*.json; do echo "=== $f"; cat "$f"; echo; done
       - uses: actions/upload-artifact@v4
         with: { name: r-dac, path: results/*.json }
