@@ -11,7 +11,9 @@ Each stage maps to a responsibility in an ads quality & ranking team.
 | 5 | Ranking, auction, bidding | Criteo Attribution | Second-price replay with logged cost, value-based bids (cpo x pCTR x pCVR), ROI-target auto-bidding, adaptive budget pacing | done |
 | 5b | A/B testing | Criteo Attribution | User-level A/B of bidding policies, SRM check, delta-method ROI, power / MDE, A/A and peeking false-positive rates | done |
 | 6 | Serving | XGBoost models | Skew-checked export, FastAPI scorer, model + HTTP latency, open-loop load test, KServe with limits | done |
-| 7 | Rollout and monitoring | Criteo Attribution predictions, serving image | Canary InferenceService with gated 10/25/50% rollout, promote / rollback; daily PSI and calibration drift report | done |
+| 7 | Rollout and monitoring | Criteo Attribution predictions, serving image | Canary InferenceService with gated 10/25/50% rollout, promote / rollback; daily PSI and calibration drift report; live `/metrics` PSI with Prometheus alert rules | done |
+| 8 | Orchestration | same | Airflow DAG: drift check -> retrain decision -> skew-checked export -> canary | done (CI-tested, not yet scheduled) |
+| 9 | Candidate retrieval | Criteo Attribution clicks | Two-tower with logQ-corrected in-batch softmax, recall@K vs popularity, feature leakage check | done |
 
 ## Datasets
 

@@ -101,8 +101,10 @@ deployments that run training-prediction skew tests before a canary rollout.
 | Online experiment before full rollout | User-level A/B test with SRM, delta method, power analysis and CUPED | done (offline replay) |
 | Online feature store for low-latency features | Features are sent in the request payload (`instances`) | not in this repo |
 | Canary rollout, then gradual traffic shift | `adsrank-canary` InferenceService + `scripts/canary.py`: 10% -> 25% -> 50% of traffic, gated on errors, p99, mean pCTR ratio and score PSI; promote or roll back (`make canary`) | done (kind + KServe on CI: same model promoted, broken model rolled back at 10%) |
-| Prediction score and drift monitoring | `monitoring.py` / `run_drift.py`: daily PSI of pCTR, pCVR and campaign mix plus daily calibration ratio, test window vs validation window (`make drift`) | done (offline batch report; no live alerting) |
+| Prediction score and drift monitoring | `monitoring.py` / `run_drift.py`: daily PSI of pCTR, pCVR and campaign mix plus daily calibration ratio, test window vs validation window (`make drift`) | done: batch report, plus live rolling-window PSI on `/metrics` with Prometheus alert rules (`k8s/monitoring.yaml`, promtool-tested) |
 | Multi-GPU distributed training (A100, DDP / FSDP) | Single-machine CPU training on 2M rows | not in this repo |
+| Workflow orchestration of the training pipeline | Airflow DAG `dags/adsrank_retrain.py`: drift check -> retrain decision -> skew-checked export -> canary (import and task graph tested on Airflow 3.4 in CI) | done (not yet run on a schedule) |
+| Candidate retrieval before ranking | Two-tower model with logQ-corrected in-batch softmax (`two_tower.py`) | done, with a leakage finding (see [Candidate retrieval](#candidate-retrieval-two-tower)) |
 
 The rows marked "not in this repo" are the remaining steps toward production. Canary rollout and
 drift monitoring are covered in [Rollout and monitoring](#rollout-and-monitoring).
@@ -609,7 +611,86 @@ Levels: PSI < 0.1 stable, 0.1-0.25 watch, > 0.25 act (common rule of thumb, conf
   alerting on separately. Caveat: that window has only ~10k rows, so part of the movement is
   sampling noise; the reported status uses score PSI only.
 
-## Quickstart
+### Live score monitoring (`GET /metrics`)
+
+The batch report needs a finished window of predictions; the serving path has to raise the alarm
+while traffic flows. `make export` now also saves the validation-window pCTR deciles
+(`reference_scores.json`), and every scoring server keeps a ring buffer of the last 50,000 scored
+candidates and exposes, in Prometheus format, a pCTR histogram, the rolling-window PSI against that
+reference, and the rolling mean next to the reference mean (`serving/live.py`).
+`k8s/monitoring.yaml` scrapes it (PodMonitor) and alerts on the same two signals the canary gate
+uses: PSI > 0.25 for 10 minutes (page), > 0.1 for 30 minutes (ticket), and a mean pCTR more than
+10% from the reference (page), all only once the window holds 5,000+ scores. The rules are checked
+and unit-tested with `promtool` in CI (`tests/prometheus/rules_test.yml`: a PSI of 8.5 pages after
+10 minutes, a healthy pod and a pod with too few scores stay quiet, a 12% scale shift pages).
+
+Values each server reported after serving the canary traffic (experiments workflow):
+
+| Server | Model | Requests | Rolling PSI | Rolling mean pCTR | Reference mean |
+|---|---|---|---|---|---|
+| stable | v2 (good) | 3,217 | 0.0007 | 0.3477 | 0.3491 |
+| canary | v2 (good) | 1,285 | 0.0007 | 0.3487 | 0.3491 |
+| canary | v3 (broken vocabulary) | 156 | **8.615** | 0.3698 | 0.3491 |
+
+The broken model's live PSI matches what the canary gate measured on the same traffic (8.548),
+so the same failure would also have paged in production had it got past the canary.
+
+### Scheduled retraining (Airflow)
+
+`dags/adsrank_retrain.py` runs the pipeline daily with the repository's own `make` targets:
+
+```
+download_data >> calibrate >> drift_report >> decide
+decide -> skip_retrain
+decide -> export_with_skew_check >> build_image >> canary_rollout
+```
+
+`decide` applies `adsrank.pipeline.retrain_decision` to `results/drift.json`: retrain on any
+window with score PSI > 0.25, or, in windows with at least 20,000 rows, campaign-mix PSI > 0.25 or
+calibration off by more than 5% (smaller windows are too noisy for those two). A failed skew
+check stops the run before an image is built; a failed canary gate fails the last task and leaves
+stable untouched. Trigger with `{"force": true}` to retrain regardless.
+
+On the drift report above, the decision is **retrain**: pCVR calibration is 0.903 in the
+7.9-10.6 hour window (34,026 rows). The 5.3-hour window with the campaign-mix spike (PSI 0.36)
+does not count on its own, because it has only ~10k rows.
+
+The DAG's import and task graph are tested on Airflow 3.4 in CI; it has not been run on a
+schedule against a live cluster yet.
+
+## Candidate retrieval (two-tower)
+
+The ranking models score a short candidate list (50 per request in the serving benchmark).
+`two_tower.py` builds the retrieval step in front of it: a query tower over request features and
+an ad tower over the campaign, trained on train-window clicks with an in-batch sampled softmax
+and logQ correction (popular campaigns appear as in-batch negatives more often, so their sampling
+log-probability is subtracted). Evaluation: for 50,000 test-window clicks, rank all 665 campaigns
+by dot product and check whether the clicked one is in the top K. Exact scoring of all 665 campaigns
+is one matrix product (~0.5 microseconds per query, amortized over a batch of 50,000), so no
+ANN index is needed at this size. (`make two-tower`;
+runner numbers, 484,573 train clicks, 3 epochs, ~50 s per model.)
+
+| Query features | Identifiability | Method | Recall@10 | Recall@50 | Recall@100 | MRR |
+|---|---|---|---|---|---|---|
+| any | - | popularity (train-window click counts) | 0.219 | 0.486 | 0.647 | 0.098 |
+| hour, user recency only | 0.054 | **two-tower** | **0.237** | **0.516** | **0.672** | **0.112** |
+| + cat1, cat6, cat7, cat9 | 0.874 | context popularity | 0.659 | 0.773 | 0.836 | 0.583 |
+| + cat1, cat6, cat7, cat9 | 0.874 | two-tower | 0.855 | 0.932 | 0.959 | 0.749 |
+| + all cat features except cat5 | 1.000 | two-tower | 0.998 | 0.999 | 1.000 | 0.994 |
+
+- **The first result, recall@10 = 0.998, was a leak, not retrieval.** Criteo does not say which of
+  cat1-cat9 describe the request and which describe the ad. Only cat5 is a function of the
+  campaign on its own (99.9% of rows equal the campaign's modal value), so it goes to the ad tower;
+  the others look request-side one at a time (purity 0.40-0.90). Together they name the campaign:
+  for 99.9998% of train clicks the campaign is the most common one for that combination of values
+  ("identifiability"). A query tower that sees them only has to recognise the combination.
+- **Only the request-only row is a clean retrieval result**, and it is modest: +1.8 points of
+  recall@10 over popularity (0.237 vs 0.219), +3.1 at 50. The dataset has almost no request-side
+  signal: `uid` is nearly unique per row, so there is no user history, which is where most of a
+  production retrieval model's lift would come from.
+- The rows with cat features are kept as a measurement of the leak, not as model quality. Before
+  trusting a retrieval number, check that the query features cannot name the item on their own.
+
 
 ```bash
 uv venv && source .venv/bin/activate
@@ -631,6 +712,8 @@ make export bench ATTR_ROWS=2000000       # export serving models (skew check) +
 make serve                                # local scoring server on :8080 (separate terminal)
 make loadtest                             # open-loop load test, p50 / p90 / p99
 make drift                                # daily score / campaign PSI + calibration (after calibrate)
+python -m adsrank.pipeline results/drift.json   # the retraining decision the DAG would take
+make two-tower ATTR_ROWS=2000000          # two-tower retrieval, three query-feature sets
 make canary-image canary CANARY_IMAGE=adsrank-serving:v2   # gated canary on kind (after deploy)
 gh workflow run experiments -f rows=2000000                 # both, end to end, on GitHub Actions
 python -m adsrank.prep --input data/train_2000000.csv --out data/criteo_2000000.parquet
@@ -663,6 +746,11 @@ src/adsrank/
   monitoring.py         PSI (numeric / categorical), daily drift table, canary gate
   run_drift.py          daily drift report, test window vs validation window
   canary.py             step-wise canary rollout with hash routing and per-step gate
+  pipeline.py           retraining decision on a drift report (used by the Airflow DAG)
+  two_tower.py          two-tower retrieval, identifiability check, recall@K vs popularity
+  serving/live.py       rolling-window PSI and Prometheus metrics in the scoring server
+dags/adsrank_retrain.py  Airflow DAG: drift check -> retrain -> skew-checked export -> canary
+k8s/monitoring.yaml     PodMonitor and PrometheusRule (PSI and mean-shift alerts)
 scripts/loadtest.py     open-loop HTTP load test
 scripts/canary.py       canary rollout against two scoring servers (exit 0 = promote)
 scripts/canary_rollout.sh  deploy canary, run the gate in-cluster, promote or roll back
@@ -701,8 +789,9 @@ repository; the scripts download them from the original source.
 ## Future work
 
 - Train the DAC models on the full 45M rows (GPU) to close the gap to published AUC.
-- Live drift monitoring: export score histograms to Prometheus and alert in Grafana instead of a
-  batch report.
+- Run the Airflow DAG on a schedule against the kind cluster, with Prometheus scraping
+  `k8s/monitoring.yaml`, and record a full drift -> retrain -> canary cycle.
+- Retrieval with real request-side signal (user history), which this dataset does not have.
 - A traffic-shaped spend plan for the pacer.
 
 ## References
