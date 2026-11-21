@@ -33,4 +33,4 @@ def test_two_tower_learns_context():
     feats = build_features(df, time_split(df))
     r = train_eval(feats, df, epochs=3, batch=512, threads=2, log=lambda *_: None)
     assert r["two_tower"]["recall@10"] > r["popularity"]["recall@10"] + 0.2
-    assert r["n_campaigns"] == 50
+    assert r["n_campaigns"] == df.campaign.nunique()          # every campaign seen in train is retrievable
