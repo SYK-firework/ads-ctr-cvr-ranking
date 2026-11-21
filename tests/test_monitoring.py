@@ -90,3 +90,16 @@ def test_rollout_promotes_good_canary_through_all_steps():
 def test_rollout_stops_bad_canary_at_first_step():
     res = _run(_fake_servers(1.3))                       # canary over-predicts CTR by 30%
     assert res["decision"] == "rollback" and len(res["history"]) == 1
+
+
+def test_canary_path_imports_without_pandas():
+    """The canary gate runs inside the serving image, which has numpy but not pandas."""
+    import subprocess
+    import sys
+    code = ("import builtins; real = builtins.__import__\n"
+            "def imp(n, *a, **k):\n"
+            "    if n.split('.')[0] == 'pandas': raise ImportError(n)\n"
+            "    return real(n, *a, **k)\n"
+            "builtins.__import__ = imp\n"
+            "import adsrank.canary\n")
+    subprocess.run([sys.executable, "-c", code], check=True)

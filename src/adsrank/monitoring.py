@@ -23,7 +23,9 @@ Two questions a deployed ads model has to answer every day:
 from dataclasses import asdict, dataclass, field
 
 import numpy as np
-import pandas as pd
+
+# pandas is imported inside the batch-report functions only: the canary gate runs in the serving
+# image, which ships numpy but not pandas.
 
 EPS = 1e-6
 
@@ -42,6 +44,7 @@ def psi(reference, current, n_bins: int = 10) -> float:
 def categorical_psi(reference, current, top: int = 50) -> float:
     """PSI for a categorical feature: the `top` reference categories plus one 'other' bucket.
     Unseen categories land in 'other', so a new campaign mix shows up as drift."""
+    import pandas as pd
     ref, cur = pd.Series(np.asarray(reference)), pd.Series(np.asarray(current))
     keep = set(ref.value_counts().index[:top])
     r = ref.where(ref.isin(keep), "__other__").value_counts(normalize=True)
@@ -55,11 +58,12 @@ def drift_level(value: float, watch: float = 0.1, act: float = 0.25) -> str:
     return "act" if value > act else "watch" if value > watch else "stable"
 
 
-def daily_drift(ref: pd.DataFrame, cur: pd.DataFrame, score_cols=("p_ctr", "p_cvr"),
-                label_cols=None, cat_cols=("campaign",), day_seconds: int = 86400) -> pd.DataFrame:
+def daily_drift(ref, cur, score_cols=("p_ctr", "p_cvr"),
+                label_cols=None, cat_cols=("campaign",), day_seconds: int = 86400):
     """One row per day of `cur`: score PSI and categorical PSI against `ref`, plus the
     calibration ratio when labels are given. `label_cols` maps score column -> label column;
     CVR is measured on clicked rows only (post-click conversion)."""
+    import pandas as pd
     label_cols = label_cols or {}
     day = (cur["timestamp"] - cur["timestamp"].min()) // day_seconds
     rows = []
