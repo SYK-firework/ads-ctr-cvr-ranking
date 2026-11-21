@@ -36,6 +36,8 @@ def test_two_tower_learns_context():
     assert r["n_campaigns"] == df.campaign.nunique()          # every campaign seen in train is retrievable
     r0 = train_eval(feats, df, epochs=1, batch=512, threads=2, query_cats=[], log=lambda *_: None)
     assert "context_popularity" not in r0 and r0["identifiability"] < r["identifiability"]
+    rh = train_eval(feats, df, epochs=1, batch=512, threads=2, query_cats=[], history=True, log=lambda *_: None)
+    assert {"previous_click_then_popularity", "share_with_previous_click"} <= set(rh)
 
 
 def test_identifiability():
@@ -47,3 +49,17 @@ def test_identifiability():
     assert full == 1.0                                              # the campaign names itself
     assert identifiability(feats, ["cat9"]) < identifiability(feats, ["cat9", "cat2", "cat3", "cat4"])
     assert identifiability(feats, []) < 0.1                         # global top-1 share of 50 campaigns
+
+
+def test_previous_click_campaign_uses_only_earlier_clicks():
+    import pandas as pd
+    from adsrank.two_tower import previous_click_campaign
+    df = fake_attribution(3000)
+    df["click"] = 1
+    df.loc[:2, "uid"] = 7
+    df.loc[:2, "timestamp"] = [10, 20, 20]                         # third click same second as second
+    df.loc[:2, "campaign"] = [1, 2, 3]
+    feats = build_features(df, time_split(df))
+    prev = previous_click_campaign(feats, df)
+    code = dict(zip(df.campaign, feats.campaign.cat.codes))
+    assert prev[0] == 0 and prev[1] == code[1] and prev[2] == 0

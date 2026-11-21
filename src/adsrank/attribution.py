@@ -9,8 +9,9 @@ Each row is an impression. The funnel is impression -> click -> attributed conve
 Columns that only exist after the click / conversion happened are excluded (label leakage):
   conversion, conversion_timestamp, conversion_id, click_pos, click_nb
 `cost` (price paid) is the auction outcome, kept for ranking / bidding stages, not as a feature.
-`uid` is ~1.3M unique values in 2M rows (almost no repeats), so it is not used directly;
-user recency comes from time_since_last_click.
+`uid` has ~1.3M unique values in 2M rows (34% of rows are a repeat user), so it is not used as
+a ranking feature; user recency comes from time_since_last_click. Repeat users do carry history
+(see two_tower.py, user-history retrieval, and scripts/uid_repeats.py).
 """
 import numpy as np
 import pandas as pd
