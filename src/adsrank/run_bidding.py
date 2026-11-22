@@ -16,6 +16,10 @@ Experiments:
        naive PI     : cold start (alpha far too low), integral term -> wind-up
        adaptive     : warm start from the validation window, target = remaining budget /
                       remaining steps, capped proportional updates (no wind-up)
+       adaptive_traffic_plan : same, but each step's share of the budget follows the
+                      time-of-day spend profile of the validation window
+       adaptive_hindsight_plan : same, with the plan taken from the test window itself
+                      (a ceiling, not a deployable policy)
 
 usage: python -m adsrank.run_bidding --preds data/preds_test.parquet
 """
@@ -30,7 +34,9 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from adsrank.bidding import adaptive_pacing, alpha_for_roi, alpha_for_spend, pid_pacing, replay  # noqa: E402
+from adsrank.bidding import (  # noqa: E402
+    _time_steps, adaptive_pacing, alpha_for_roi, alpha_for_spend, pid_pacing, replay, spend_plan, step_edges,
+)
 
 
 def policies(d: pd.DataFrame, seed: int = 0) -> dict[str, np.ndarray]:
@@ -49,6 +55,8 @@ def main() -> None:
     a.add_argument("--preds", default="data/preds_test.parquet")
     a.add_argument("--budget-frac", type=float, default=0.2, help="budget as a fraction of total logged spend")
     a.add_argument("--target-roi", type=float, default=None, help="default: 1.5x the ROI of buying every impression")
+    a.add_argument("--history", default=None,
+                   help="raw Attribution parquet; rows before the test window shape the time-of-day spend plan")
     a.add_argument("--results", default="results")
     a = a.parse_args()
     out = Path(a.results)
@@ -93,7 +101,28 @@ def main() -> None:
         warm = "validation window"
     else:
         alpha0, warm = static["alpha"] * 0.1, "none (preds_valid.parquet missing)"
-    adaptive = adaptive_pacing(ev_cal, cost, attr, cpo, d.timestamp.to_numpy(), budget, alpha0, n_steps=n_steps)
+    ts = d.timestamp.to_numpy()
+    # traffic-shaped plan: time-of-day profile of logged traffic value (market cost) in all data
+    # before the test window. It needs at least a full day of history, which the validation
+    # window alone (a few hours on the 2M-row sample) does not have.
+    plan, plan_source = None, None
+    if a.history and Path(a.history).exists():
+        h = pd.read_parquet(a.history, columns=["timestamp", "cost"])
+        h = h[h.timestamp < ts.min()]
+        if len(h) and h.timestamp.max() - h.timestamp.min() >= 86400:
+            plan = spend_plan(h.timestamp.to_numpy(), h.cost.to_numpy(), step_edges(ts, n_steps))
+            plan_source = f"logged cost by hour of day, {(h.timestamp.max() - h.timestamp.min()) / 86400:.1f} days before test"
+    adaptive = adaptive_pacing(ev_cal, cost, attr, cpo, ts, budget, alpha0, n_steps=n_steps)
+    paced = {"naive_pi": naive, "adaptive": adaptive}
+    if plan is not None:
+        paced["adaptive_traffic_plan"] = adaptive_pacing(ev_cal, cost, attr, cpo, ts, budget, alpha0,
+                                                         n_steps=n_steps, plan=plan)
+    # ceiling: the plan a hindsight constant multiplier would have followed on the test window itself
+    srt = np.sort(ts)
+    hind_spend = np.where(ev_cal * static["alpha"] >= cost, cost, 0.0)[np.argsort(ts, kind="stable")]
+    hind_plan = np.bincount(_time_steps(srt, n_steps), weights=hind_spend, minlength=n_steps)
+    paced["adaptive_hindsight_plan"] = adaptive_pacing(ev_cal, cost, attr, cpo, ts, budget, alpha0,
+                                                       n_steps=n_steps, plan=hind_plan / hind_plan.sum())
 
     even = budget / n_steps
     def pace_summary(p):
@@ -103,11 +132,19 @@ def main() -> None:
                 "idle_steps": int((p.spend < 0.1 * even).sum()),
                 "value_vs_hindsight_static": float(p.value.sum() / static["value"])}
     report["pacing"] = {"warm_start": warm, "alpha0": alpha0, "hindsight_static_alpha": static["alpha"],
-                        "naive_pi": pace_summary(naive), "adaptive": pace_summary(adaptive)}
+                        **{k: pace_summary(p) for k, p in paced.items()}}
+    report["pacing"]["traffic_plan_source"] = plan_source
+    if plan is not None:
+        report["pacing"]["traffic_plan_vs_even_max_ratio"] = float(plan.max() * n_steps)
+        report["pacing"]["traffic_plan_vs_even_min_ratio"] = float(plan.min() * n_steps)
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.plot(np.arange(n_steps), np.arange(1, n_steps + 1) / n_steps, "--", color="grey", label="even plan")
     ax.plot(naive.step, naive.spend.cumsum() / budget, label="naive PI (cold start, wind-up)")
-    ax.plot(adaptive.step, adaptive.spend.cumsum() / budget, label="adaptive (warm start, no wind-up)")
+    ax.plot(adaptive.step, adaptive.spend.cumsum() / budget, label="adaptive, even plan")
+    if "adaptive_traffic_plan" in paced:
+        tp = paced["adaptive_traffic_plan"]
+        ax.plot(np.arange(n_steps), np.cumsum(plan), ":", color="black", lw=1, label="traffic-shaped plan")
+        ax.plot(tp.step, tp.spend.cumsum() / budget, label="adaptive, traffic-shaped plan")
     ax.set(xlabel="time step", ylabel="cumulative share of budget", title="Budget pacing")
     ax.legend()
     fig.tight_layout()
@@ -123,7 +160,7 @@ def main() -> None:
           .reindex(columns=cols).round(4).to_string())
     p = report["pacing"]
     print(f"\n== Budget pacing (ctcvr_cal, {n_steps} steps; warm start: {p['warm_start']}) ==")
-    print(pd.DataFrame({k: p[k] for k in ("naive_pi", "adaptive")}).T.round(3).to_string())
+    print(pd.DataFrame({k: p[k] for k in paced}).T.round(3).to_string())
     print(f"\nsaved {out}/bidding.json, bidding_value_vs_spend.png, bidding_pacing.png")
 
 

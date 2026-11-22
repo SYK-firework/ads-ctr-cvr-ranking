@@ -22,6 +22,8 @@ On 2M impressions with a held-out, later-in-time test window:
   their errors had been cancelling. Calibrate the quantity you bid on.
 - **Value-based bidding (`cpo x pCTR x pCVR`) buys 43% more conversion value than CTR-only
   bidding at the same budget** in a second-price replay; CTR-only bids halve conversions.
+- **Shaping the daily spend plan by time-of-day traffic adds 16% conversion value** to an
+  adaptive budget pacer (431 to 500) and matches a hindsight-tuned bid multiplier at every budget tried.
 - **Delayed conversions halve the naive CVR** (only 50.5% visible at training time); rescaling by
   the expected visible share restores calibration with no AUC loss, while the classic
   exponential DFM over-corrects (calibration 1.94) on bimodal, heavy-tailed delays.
@@ -256,7 +258,7 @@ Findings:
   The pacing plot shows the failure mode: after a slow start the integral term pushes the
   multiplier up, spend overshoots around steps 20-24, then the multiplier collapses and almost
   nothing is bought for ~15 steps (integral wind-up). Causes: a cold start far from the right
-  multiplier, no anti-windup, and an even spend plan while traffic value varies over the day. Next: warm start from the previous period,
+  multiplier, no anti-windup, and an even spend plan while traffic value varies over the day. The fixes below: warm start from the previous period,
   anti-windup, and a spend plan shaped by expected traffic.
 - **Adaptive pacer (the fix)**: warm start from the validation window, each step's target
   recomputed as remaining budget / remaining steps (a bounded stand-in for the integral term that
@@ -266,13 +268,32 @@ Findings:
   | Pacer (20% budget, 48 steps) | Budget used | Largest step vs even plan | Idle steps | Value | vs hindsight constant |
   |---|---|---|---|---|---|
   | Naive PI | 98.6% | 4.94x | 16 | 325 | 65.5% |
-  | **Adaptive** | **100.0%** | **1.73x** | **0** | **431** | **86.9%** |
+  | Adaptive, even plan | 100.0% | 1.73x | 0 | 431 | 86.9% |
+  | **Adaptive, traffic-shaped plan** | **100.0%** | **1.69x** | **1** | **500** | **100.6%** |
+  | Adaptive, hindsight plan (ceiling) | 100.0% | 1.87x | 0 | 497 | 100.0% |
 
   The adaptive pacer recovers **33% more conversion value** than the naive one with no idle steps.
   The warm start lands close to the right level: the multiplier fitted on the validation window
   (0.0886) is within 4% of the hindsight-optimal one for the test window (0.0924).
-  The remaining 13% gap to the hindsight-tuned constant multiplier comes from the even spend
-  plan: traffic value varies over the day, so a plan shaped by forecast traffic would close it.
+- **Traffic-shaped spend plan (closing the last gap)**: with an even plan the adaptive pacer
+  still trails the hindsight constant by 13%. Giving it the plan that the hindsight constant
+  actually followed closes the gap exactly (100.0%), so the whole gap is the shape of the plan.
+  `spend_plan()` builds a deployable version from past data only: the time-of-day profile of
+  logged traffic value (market cost) in the 2.9 days before the test window, integrated over each
+  step. Night hours get as little as 0.12x the even share and daytime up to 1.56x. That lifts
+  value from 431 to **500 (+16%)**, matching the hindsight constant, and it holds across budgets:
+
+  | Budget (share of total spend) | Naive PI | Adaptive, even plan | Adaptive, traffic-shaped plan | Hindsight plan |
+  |---|---|---|---|---|
+  | 10% | 88.9% | 91.9% | **100.3%** | 100.1% |
+  | 20% | 65.5% | 86.9% | **100.6%** | 100.0% |
+  | 30% | 66.6% | 81.6% | **99.8%** | 99.9% |
+  | 50% | 92.3% | 75.9% | **98.6%** | 99.9% |
+
+  (Value as a share of the hindsight-tuned constant multiplier.) A first attempt shaped the plan
+  from the validation window alone and lost half the value (49%, 37 idle steps): on the 2M-row
+  sample that window covers only about six afternoon hours, so the plan starved every other hour.
+  A time-of-day profile needs at least a full day of history.
 
 Raw numbers: [results/bidding.json](results/bidding.json).
 
@@ -909,7 +930,6 @@ These need GPUs or the full datasets, which a laptop and free CI runners do not 
 - Feed the daily run a moving window of the 30-day data instead of the same 2M rows, with
   Prometheus scraping `k8s/monitoring.yaml` during the canary.
 - Longer user histories (last N clicks) in the query tower, on the full 16.5M rows.
-- A traffic-shaped spend plan for the pacer.
 
 ## References
 

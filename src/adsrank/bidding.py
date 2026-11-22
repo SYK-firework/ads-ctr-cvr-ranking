@@ -84,9 +84,40 @@ def pid_pacing(ev, cost, attribution, cpo, timestamp, budget: float, n_steps: in
     return pd.DataFrame(rows)
 
 
+def spend_plan(hist_ts, hist_spend, step_edges, period: float = 86400.0, n_bins: int = 24) -> np.ndarray:
+    """Share of the budget to plan for each time step, shaped by the time of day.
+
+    The spend rate per time-of-day bin is estimated from a past window (spend divided by the
+    time that window spent in each bin), then integrated over each future step. Steps that
+    fall in high-value hours get a larger share. Only past data is used, so the plan can be
+    set before the day starts. Returns weights that sum to 1."""
+    hist_ts, hist_spend = np.asarray(hist_ts, np.float64), np.asarray(hist_spend, np.float64)
+    width = period / n_bins
+    bin_of = ((hist_ts % period) // width).astype(int)
+    spend_per_bin = np.bincount(bin_of, weights=hist_spend, minlength=n_bins)
+    grid = np.linspace(hist_ts.min(), hist_ts.max(), 20000)               # time covered per bin
+    seconds_per_bin = np.bincount(((grid % period) // width).astype(int), minlength=n_bins) * (
+        (hist_ts.max() - hist_ts.min()) / len(grid))
+    rate = np.where(seconds_per_bin > 0, spend_per_bin / np.maximum(seconds_per_bin, 1e-12), 0.0)
+    if rate.sum() <= 0:
+        rate = np.ones(n_bins)
+    w = []
+    for lo, hi in zip(step_edges[:-1], step_edges[1:]):
+        g = np.linspace(lo, hi, 200, endpoint=False)
+        w.append(rate[((g % period) // width).astype(int)].mean() * (hi - lo))
+    w = np.asarray(w)
+    return w / w.sum() if w.sum() > 0 else np.full(len(w), 1 / len(w))
+
+
+def step_edges(timestamp, n_steps: int) -> np.ndarray:
+    """Boundaries of the n_steps equal-width time steps used by the pacers."""
+    ts = np.asarray(timestamp, np.float64)
+    return np.linspace(ts.min(), ts.max(), n_steps + 1)
+
+
 def adaptive_pacing(ev, cost, attribution, cpo, timestamp, budget: float, alpha0: float,
                     n_steps: int = 48, kp: float = 0.5, max_change: float = 0.5,
-                    step_cap: float = 1.5) -> pd.DataFrame:
+                    step_cap: float = 1.5, plan=None) -> pd.DataFrame:
     """Budget pacing without integral wind-up.
 
     - warm start: alpha0 comes from the previous period (validation window), not a guess;
@@ -96,14 +127,20 @@ def adaptive_pacing(ev, cost, attribution, cpo, timestamp, budget: float, alpha0
     - proportional update on log(alpha), with the per-step change capped at +-max_change;
     - spend in a step is capped at step_cap x target and at the remaining budget: once the cap
       is reached the bidder stops buying until the next step (throttling), so a traffic burst
-      cannot drain the budget early.
+      cannot drain the budget early;
+    - plan: optional per-step budget shares (e.g. from spend_plan); default is an even plan.
+      The target is the remaining budget times this step's share of the remaining plan.
     """
     order = np.argsort(np.asarray(timestamp), kind="stable")
     ev, cost, attribution, cpo, ts = (np.asarray(x)[order] for x in (ev, cost, attribution, cpo, timestamp))
     step_of = _time_steps(ts, n_steps)
+    w = np.full(n_steps, 1.0 / n_steps) if plan is None else np.asarray(plan, np.float64)
+    if len(w) != n_steps:
+        raise ValueError("plan must have one weight per step")
     alpha, remaining, rows = alpha0, budget, []
     for t in range(n_steps):
-        target = remaining / (n_steps - t)
+        rest = w[t:].sum()
+        target = remaining * w[t] / rest if rest > 0 else 0.0
         m = np.flatnonzero(step_of == t)
         win = m[ev[m] * alpha >= cost[m]]
         # throttle: stop buying once the step cap (or the remaining budget) is reached

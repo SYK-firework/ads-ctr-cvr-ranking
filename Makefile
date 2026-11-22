@@ -37,7 +37,7 @@ calibrate:
 
 # Bidding replay: fixed budget, value-vs-spend curves, ROI-target auto-bidding, budget pacing
 bid:
-	python -m adsrank.run_bidding --preds $(DATA_DIR)/preds_test.parquet
+	python -m adsrank.run_bidding --preds $(DATA_DIR)/preds_test.parquet --history $(ATTR_PARQUET)
 
 # Simulated A/B test of bidding policies (user-level split, SRM, delta method, power, A/A, peeking)
 abtest:

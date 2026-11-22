@@ -82,3 +82,32 @@ def test_adaptive_beats_naive_pi_on_bursty_traffic():
     alpha0 = alpha_for_spend(ev[:5000], cost[:5000], 0.2 * cost[:5000].sum())
     adaptive = adaptive_pacing(ev, cost, attr, cpo, ts, budget, alpha0, n_steps=40)
     assert adaptive.value.sum() > naive.value.sum()
+
+
+def test_spend_plan_follows_time_of_day_and_sums_to_one():
+    from adsrank.bidding import spend_plan
+    day = 86400.0
+    ts = np.arange(0, 3 * day, 60.0)                          # 3 days of history, one row a minute
+    spend = np.where((ts % day) >= day / 2, 3.0, 1.0)         # second half of each day spends 3x
+    edges = np.linspace(3 * day, 4 * day, 5)                  # next day in 4 steps
+    w = spend_plan(ts, spend, edges)
+    assert abs(w.sum() - 1) < 1e-9
+    assert w[2] > 2.5 * w[0] and abs(w[0] - w[1]) < 1e-6      # afternoon steps get ~3x the morning
+
+
+def test_adaptive_pacing_with_plan_tracks_plan_and_even_plan_is_default():
+    from adsrank.bidding import adaptive_pacing
+    rng = np.random.default_rng(0)
+    n = 40000
+    ts = np.sort(rng.uniform(0, 86400, n))
+    cost = rng.exponential(1.0, n)
+    ev = cost * rng.lognormal(0, 0.5, n)
+    attr, cpo = (rng.random(n) < 0.05).astype(float), np.full(n, 10.0)
+    budget = 0.2 * cost.sum()
+    even = adaptive_pacing(ev, cost, attr, cpo, ts, budget, alpha0=0.5, n_steps=8)
+    same = adaptive_pacing(ev, cost, attr, cpo, ts, budget, alpha0=0.5, n_steps=8, plan=np.full(8, 1 / 8))
+    assert np.allclose(even.spend, same.spend)
+    plan = np.array([1, 1, 1, 1, 3, 3, 3, 3], float) / 16
+    shaped = adaptive_pacing(ev, cost, attr, cpo, ts, budget, alpha0=0.5, n_steps=8, plan=plan)
+    assert shaped.spend.sum() <= budget * (1 + 1e-9)
+    assert shaped.spend[4:].sum() > 2 * shaped.spend[:4].sum()   # spends more where the plan says

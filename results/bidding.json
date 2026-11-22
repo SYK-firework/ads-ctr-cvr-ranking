@@ -87,7 +87,7 @@
  },
  "pacing": {
   "warm_start": "validation window",
-  "alpha0": 0.08860014402689022,
+  "alpha0": 0.08860014402689016,
   "hindsight_static_alpha": 0.09236445511359667,
   "naive_pi": {
    "spend": 21.94229947006177,
@@ -106,6 +106,27 @@
    "max_step_vs_even_plan": 1.7320152407806373,
    "idle_steps": 0,
    "value_vs_hindsight_static": 0.8686163411452302
-  }
+  },
+  "adaptive_traffic_plan": {
+   "spend": 22.255304480275917,
+   "value": 499.5603212046409,
+   "conversions": 4309.0,
+   "budget_used": 0.9999983830579312,
+   "max_step_vs_even_plan": 1.6916454966285954,
+   "idle_steps": 1,
+   "value_vs_hindsight_static": 1.0060946830477258
+  },
+  "adaptive_hindsight_plan": {
+   "spend": 22.254473114838135,
+   "value": 496.7068257782803,
+   "conversions": 4320.0,
+   "budget_used": 0.999961027285322,
+   "max_step_vs_even_plan": 1.866774508490454,
+   "idle_steps": 0,
+   "value_vs_hindsight_static": 1.0003478563789472
+  },
+  "traffic_plan_source": "logged cost by hour of day, 2.9 days before test",
+  "traffic_plan_vs_even_max_ratio": 1.5592986432393405,
+  "traffic_plan_vs_even_min_ratio": 0.12489738421538854
  }
 }
