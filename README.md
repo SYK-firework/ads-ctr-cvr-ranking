@@ -103,11 +103,10 @@ deployments that run training-prediction skew tests before a canary rollout.
 | Canary rollout, then gradual traffic shift | `adsrank-canary` InferenceService + `scripts/canary.py`: 10% -> 25% -> 50% of traffic, gated on errors, p99, mean pCTR ratio and score PSI; promote or roll back (`make canary`) | done (kind + KServe on CI: same model promoted, broken model rolled back at 10%) |
 | Prediction score and drift monitoring | `monitoring.py` / `run_drift.py`: daily PSI of pCTR, pCVR and campaign mix plus daily calibration ratio, test window vs validation window (`make drift`) | done: batch report, plus live rolling-window PSI on `/metrics` with Prometheus alert rules (`k8s/monitoring.yaml`, promtool-tested) |
 | Multi-GPU distributed training (A100, DDP / FSDP) | `ddp.py`: DistributedDataParallel training of DeepFM, verified on 2 CPU processes (gloo) | code path verified; no GPUs here, so no multi-GPU speed-up measured |
-| Workflow orchestration of the training pipeline | Airflow DAG `dags/adsrank_retrain.py`: drift check -> retrain decision -> skew-checked export -> canary | done: one full run on Airflow 3.4 against kind + KServe (all tasks succeeded, new image promoted); not yet on a recurring schedule |
+| Workflow orchestration of the training pipeline | Airflow DAG `dags/adsrank_retrain.py`: drift check -> retrain decision -> skew-checked export -> canary | done: one full run on Airflow 3.4 against kind + KServe (all tasks succeeded, new image promoted), now scheduled daily (`.github/workflows/daily.yml`) |
 | Candidate retrieval before ranking | Two-tower model with logQ-corrected in-batch softmax (`two_tower.py`) | done, with a leakage finding (see [Candidate retrieval](#candidate-retrieval-two-tower)) |
 
-The rows marked "not in this repo" are the remaining steps toward production. Canary rollout and
-drift monitoring are covered in [Rollout and monitoring](#rollout-and-monitoring).
+Canary rollout and drift monitoring are covered in [Rollout and monitoring](#rollout-and-monitoring).
 
 ## Results
 
@@ -273,7 +272,7 @@ Findings:
   The warm start lands close to the right level: the multiplier fitted on the validation window
   (0.0886) is within 4% of the hindsight-optimal one for the test window (0.0924).
   The remaining 13% gap to the hindsight-tuned constant multiplier comes from the even spend
-  plan: traffic value varies over the day, and a plan shaped by forecast traffic is the next step.
+  plan: traffic value varies over the day, so a plan shaped by forecast traffic would close it.
 
 Raw numbers: [results/bidding.json](results/bidding.json).
 
@@ -901,7 +900,9 @@ repository; the scripts download them from the original source.
 - Criteo Display Advertising Challenge: https://www.kaggle.com/c/criteo-display-ad-challenge
   (mirror used here: https://huggingface.co/datasets/reczoo/Criteo_x4)
 
-## Future work
+## Extensions at larger scale
+
+These need GPUs or the full datasets, which a laptop and free CI runners do not provide.
 
 - Train the DAC models on the full 45M rows (GPU) to close the gap to published AUC.
 - Multi-GPU DDP / FSDP on real GPUs (the code path is verified on CPU only).
@@ -943,7 +944,7 @@ repository; the scripts download them from the original source.
 - Fabijan, A., Gupchup, J., Gupta, S., Omhover, J., Qin, W., Vermeer, L., & Dmitriev, P. (2019). Diagnosing sample ratio mismatch in online controlled experiments: A taxonomy and rules of thumb for practitioners. In *Proceedings of the 25th ACM SIGKDD International Conference on Knowledge Discovery & Data Mining* (pp. 2156–2164). ACM. https://doi.org/10.1145/3292500.3330722
 - Johari, R., Koomen, P., Pekelis, L., & Walsh, D. (2017). Peeking at A/B tests: Why it matters, and what to do about it. In *Proceedings of the 23rd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining* (pp. 1517–1525). ACM. https://doi.org/10.1145/3097983.3097992
 - Deng, A., Xu, Y., Kohavi, R., & Walker, T. (2013). Improving the sensitivity of online controlled experiments by utilizing pre-experiment data. In *Proceedings of the Sixth ACM International Conference on Web Search and Data Mining* (pp. 123–132). ACM. https://doi.org/10.1145/2433396.2433413
-  (CUPED, planned)
+  (CUPED)
 
 ### Industry context
 - Baek, H. J., Ketha, H., Ray, J., Min, J., Sabbah, M., Panchal, R., Adunuthula, S., Kalva, T. R., & Tan, E. (2023, September 8). Meet Coupang's machine learning platform. *Coupang Engineering Blog*. https://medium.com/coupang-engineering/meet-coupangs-machine-learning-platform-cd00e9ccc172
