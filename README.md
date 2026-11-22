@@ -1,6 +1,6 @@
 # ads-ctr-cvr-ranking
 
-[![tests](https://github.com/samyoungjunkim-pixel/ads-ctr-cvr-ranking/actions/workflows/tests.yml/badge.svg)](https://github.com/samyoungjunkim-pixel/ads-ctr-cvr-ranking/actions/workflows/tests.yml)
+[![tests](https://github.com/SYK-firework/ads-ctr-cvr-ranking/actions/workflows/tests.yml/badge.svg)](https://github.com/SYK-firework/ads-ctr-cvr-ranking/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 CTR / CVR prediction, calibration and value-based bidding on Criteo's public
@@ -684,7 +684,7 @@ InferenceService ended on the new image. The whole run took 275 s.
 
 **Daily schedule** (`.github/workflows/daily.yml`, 09:17 UTC every day): GitHub runners are
 ephemeral, so the state carried between days is the serving image. Each run pulls
-`ghcr.io/samyoungjunkim-pixel/adsrank-serving:stable` (yesterday's promoted model) and deploys
+`ghcr.io/syk-firework/adsrank-serving:stable` (yesterday's promoted model) and deploys
 it as stable on a fresh kind + KServe cluster, runs the DAG, and pushes a newly promoted image
 back as `:stable` plus a dated tag; a rollback or "no retrain" leaves `:stable` unchanged. The
 run summary records the decision, every canary step and the outcome. First run (2026-11-21,
