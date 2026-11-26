@@ -396,6 +396,8 @@ as the XGBoost baseline (results are in the main table above).
 | XGBoost | 0.6766 | **0.8502** | **0.8502** | **72 s** |
 | DeepFM | 0.6762 | 0.8480 | 0.8494 | 215 s |
 | DCN-v2 | **0.6779** | 0.8484 | 0.8501 | 482 s |
+| NN, CVR loss on clicks only | 0.6764 | 0.8457 | 0.8475 | 293 s |
+| ESMM | 0.6766 | 0.8446 | 0.8472 | 299 s |
 
 - **DCN-v2 is the best CTR model** (+0.0013 AUC over XGBoost), the only place where explicit
   feature crosses beat trees here; **XGBoost stays best on CVR and CTCVR**.
